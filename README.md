@@ -153,7 +153,7 @@ python tools/notion_row.py 검증 out9.txt --commit               # 실제로 �
 export NOTION_TOKEN_FILE=/경로/.notion_token.txt
 ```
 
-토큰은 notion.so/my-integrations 에서 Internal integration 으로 발급하고,
+토큰은 notion.so/my-integrations 에서 Internal integration 으로 발급한다.
 쓸 페이지에서 Connections 에 그 integration 을 추가한다. 안 하면 404가 난다.
 
 ## 구성
