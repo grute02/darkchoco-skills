@@ -48,18 +48,25 @@ Claude Code는 `skills/darkweb-verify-ko/SKILL.md` 를, Codex는 이 파일을 �
 
 필요한 단계 파일만 읽는다. 전부 읽지 않는다.
 
-| 단계 | 담당 | 파일 |
+참고 문서는 아래 둘 중 **있는 쪽**에 있다. 실행 위치에 따라 다르다.
+
+    skills/darkweb-verify-ko/references/          레포에서 실행할 때
+    06_도구/skill/darkweb-verify-ko/references/   프로젝트 폴더에서 실행할 때
+
+| 단계 | 담당 | 파일 이름 |
 |---|---|---|
-| 2 사전 확인 | AI | `skills/darkweb-verify-ko/references/stage2-precheck.md` |
-| 3 게시글 확인 | 사람 | `skills/darkweb-verify-ko/references/stage3-post.md` |
-| 4 마스킹 | AI | `skills/darkweb-verify-ko/references/stage4-masking.md` |
-| 5 재료 합치기 | AI | `skills/darkweb-verify-ko/references/stage5-merge.md` |
-| 6 판정 근거 | AI | `skills/darkweb-verify-ko/references/stage6-toolkit.md` |
-| 7 검토 | 사람 | `skills/darkweb-verify-ko/references/stage7-review.md` |
-| 8 판정 | 사람 | `skills/darkweb-verify-ko/references/stage8-verdict.md` |
-| 9 DB 입력 | AI | `skills/darkweb-verify-ko/references/stage9-db.md` |
-| 파일 트리 | AI | `skills/darkweb-verify-ko/references/tree-analysis.md` |
-| 발행처 목록 | 참고 | `skills/darkweb-verify-ko/references/publishers.md` |
+| 2 사전 확인 | AI | `stage2-precheck.md` |
+| 3 게시글 확인 | 사람 | `stage3-post.md` |
+| 4 마스킹 | AI | `stage4-masking.md` |
+| 5 재료 합치기 | AI | `stage5-merge.md` |
+| 6 판정 근거 | AI | `stage6-toolkit.md` |
+| 7 검토 | 사람 | `stage7-review.md` |
+| 8 판정 | 사람 | `stage8-verdict.md` |
+| 9 DB 입력 | AI | `stage9-db.md` |
+| 파일 트리 | AI | `tree-analysis.md` |
+| 발행처 목록 | 참고 | `publishers.md` |
+
+도구도 마찬가지다. `tools/` 또는 `06_도구/tools/` 에 있다.
 
 ## 판정 다섯 축
 
