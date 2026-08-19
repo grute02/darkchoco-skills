@@ -1,0 +1,4 @@
+interface:
+  display_name: "다크웹 유출 검증 (한국어)"
+  short_description: "유출 주장 하나를 9단계로 검증. 판정은 사람이 한다"
+  default_prompt: "Use $darkweb-verify-ko to verify this leak claim through stages 4 to 6."
