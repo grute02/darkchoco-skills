@@ -74,6 +74,20 @@ python tools/notion_push.py <parent_id> "<제목>" <md파일> --dry
 python tools/notion_push.py <page_id> "<제목>" <md파일> --update
 ```
 
+### notion_row.py
+
+9단계 출력을 노션 DB 행으로 만든다. **미리보기가 기본이고 `--commit` 을 붙여야 쓴다.**
+
+```bash
+python tools/notion_row.py 검증 out9.txt                       # 미리보기
+python tools/notion_row.py 검증 out9.txt --exclude "한계"        # 뺄 칸
+python tools/notion_row.py 검증 out9.txt --set "검증자=이름"     # 고칠 칸
+python tools/notion_row.py 검증 out9.txt --commit               # 실제로 쓴다
+```
+
+선택지에 없는 값은 넣지 않는다. 오타로 새 선택지가 생기는 것을 막는다.
+기존 행을 고치지 않고 새 행만 만든다. DB는 이름으로 찾으므로 ID를 코드에 박지 않는다.
+
 ## 노션 토큰
 
 토큰은 레포 밖 파일에서 읽는다. **코드에 값을 넣지 않는다.**
