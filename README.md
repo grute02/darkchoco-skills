@@ -162,9 +162,16 @@ export NOTION_TOKEN_FILE=/경로/.notion_token.txt
 skills/darkweb-verify-ko/
   SKILL.md              Claude Code 진입점
   references/           단계별 프롬프트 9개, 파일 트리, 발행처 목록
+  tools/                스킬 안에 같이 설치되는 사본
 AGENTS.md               Codex 진입점
-tools/                  tree_scan, notion, notion_push
+docs/                   개정 경위
+tools/                  tree_scan, notion, notion_push, notion_find, notion_row
 ```
+
+## 정본
+
+**프롬프트와 스킬과 도구는 이 레포가 정본이다.** 노션 사본과 다르면 여기가 맞다.
+수집 DB와 검증 DB, 회의록과 조사 자료의 정본은 노션이다.
 
 ## 판정 다섯 축
 
