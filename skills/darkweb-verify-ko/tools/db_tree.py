@@ -5,7 +5,6 @@
 이것은 표와 칸을 본다. DB 덤프에서는 이쪽이 유출 범위를 보여준다.
 
 **칸 이름과 건수만 읽는다. 값을 하나도 출력하지 않는다.**
-유출물이 있는 기계 안에서 돌리고 이 출력만 가져가면 된다.
 
     python db_tree.py treethink.sql
     python db_tree.py dump.sql --md 출력.md
