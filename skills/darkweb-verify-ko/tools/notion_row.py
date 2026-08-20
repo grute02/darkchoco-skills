@@ -6,7 +6,7 @@
 
     python tools/notion_row.py 검증 out9.txt
     python tools/notion_row.py 검증 out9.txt --exclude "검증 자료,한계"
-    python tools/notion_row.py 검증 out9.txt --set "검증자=최현서"
+    python tools/notion_row.py 검증 out9.txt --set "검증자=이름"
     python tools/notion_row.py 검증 out9.txt --commit
 
 입력 파일은 ⑨ 출력 그대로다. 한 줄에 `칸 이름: 값` 형식.
