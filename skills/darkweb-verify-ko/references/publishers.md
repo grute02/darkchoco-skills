@@ -46,19 +46,36 @@ stage2 의 3-3 조회 성공 판정을 쓴다.
 
 ## 목록
 
-| 도메인 | 검색 URL 형식 | 마지막 동작 확인 | 결과 |
+2026-08-20 전수 실측. 질의는 `Databasehooligan` 하나로 통일했다.
+
+**동작하는 곳만 돈다.** 아래 5곳이다.
+
+| 도메인 | 경로 | 실제 도착 | 결과 |
 |---|---|---|---|
-| brinztech.com | /?s= | 동작 확인. 이후 2회 실패 | 정확 일치 반환. 프록시 터널 오류로 실패한 적 있음 |
-| dailydarkweb.net | /?s= | 동작 | No Result 반환. 유효한 음성 |
-| mybroadband.co.za | ?s= | 동작. 2026-08-20 재확인 | 실전에서 유일한 독립 출처가 나온 곳. **평문 요청·리더 프록시·브라우저는 전부 막힘. 스크래핑 도구로만 열림** |
-| grayscaleinsight.com | 미확인 | 미확인 | 판매자 핸들 단독 검색으로 발견됨. 다국가 대량 게시 집계를 냄 |
-| darkwebinformer.com | **`/?s=` 안 됨** | 조회 실패. 2026-08-20 재확인 | Ghost 기반. **200이 뜨지만 내용이 첫 화면이다.** 상태 코드만 보면 성공으로 읽힌다. 검색 경로 형식 확인 필요 |
-| undercodenews.com | 미확인 | 조회 실패 | 응답 본문 없음 |
-| dexpose.io | 미확인 | 미확인 | |
-| breachsense.com | 미확인 | 미확인 | |
-| haveibeenransom.com | 미확인 | 미확인 | |
-| rankiteo.com | 미확인 | 미확인 | |
-| socradar.io | 미확인 | 미확인 | |
+| mybroadband.co.za | `/?s=` | 그대로 | 검색 결과 3건. 실전에서 유일하게 독립 출처가 나온 곳 |
+| socradar.io | `/?s=` | `/search/<질의>/` | `No Content Found` |
+| dailydarkweb.net | `/?s=` | `/search/<질의>` | 결과 없음 |
+| undercodenews.com | `/?s=` | `/search/<질의>/` | `nothing matched your search terms` |
+| dexpose.io | `/?s=` | `/search/<질의>/` | 결과 없음 |
+
+넷은 워드프레스라 `/?s=` 가 `/search/<질의>/` 로 넘어간다. 정상이다.
+
+**안 도는 곳.** 아래 6곳은 갈래 B 대상이 아니다.
+
+| 도메인 | 왜 |
+|---|---|
+| grayscaleinsight.com | `/?s=` 무시하고 첫 화면. 게다가 지금 내용이 지정학 분석이다. 다크웹 인텔이 아니다 |
+| breachsense.com | Hugo 정적 사이트. 검색 경로 없음. 첫 화면 |
+| haveibeenransom.com | 이메일 조회 도구다. 글 검색 경로가 없음. 첫 화면 |
+| rankiteo.com | `/?s=` 무시. 첫 화면 |
+| darkwebinformer.com | Ghost. `/?s=` 는 첫 화면, `/search/?q=` 는 404. 서버 검색 경로가 없다 |
+| brinztech.com | 스크래핑 엔진 전부 실패. 도달 불가 |
+
+**여섯 중 넷이 200을 준다.** 상태 코드로는 구분이 안 된다.
+
+grayscaleinsight.com 은 확인이 필요하다. publishers.md 에 다국가 대량 게시 집계를
+내는 곳으로 적혀 있는데, 2026-08-20 조회에서는 지정학 분석 기사만 나왔다.
+사이트가 바뀌었거나 다른 자산일 수 있다.
 
 ## 새 발행처 찾기와 추가
 
