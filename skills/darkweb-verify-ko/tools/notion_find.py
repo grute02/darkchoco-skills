@@ -122,8 +122,17 @@ def in_url(org: str, url: str) -> bool:
     return key in re.sub(r"[^0-9a-z]+", "", (url or "").lower())
 
 
-def classify(row_url: str, row_org: str, row_date: str,
-             new_url: str, new_org: str, new_date: str) -> tuple[str, str]:
+def same_handle(a: str, b: str) -> bool | None:
+    """게시자가 같은가. 한쪽이라도 비면 None."""
+    x = re.sub(r"[^0-9a-z가-힣]+", "", (a or "").lower())
+    y = re.sub(r"[^0-9a-z가-힣]+", "", (b or "").lower())
+    if not x or not y:
+        return None
+    return x == y
+
+
+def classify(row_url: str, row_org: str, row_date: str, row_handle: str,
+             new_url: str, new_org: str, new_date: str, new_handle: str) -> tuple[str, str]:
     """이 줄이 새 건과 어떤 사이인지. (분류, 다음에 할 일)"""
     if new_url and row_url and norm_url(row_url) == norm_url(new_url):
         return "완전 동일 건", "새로 채번하지 않는다. 이 줄에 이어 붙인다"
@@ -139,11 +148,22 @@ def classify(row_url: str, row_org: str, row_date: str,
         return "다른 건", "대상이 다르다. 대조 재료로만 본다"
 
     d = days_between(row_date, new_date)
+    gap = f"게시 시각 차이 {d}일" if d is not None else "날짜를 못 읽음"
+    h = same_handle(row_handle, new_handle)
+
+    if h is False:
+        return ("다른 게시자 재유포 후보",
+                f"대상은 같은데 게시자가 다르다 ({row_handle or '?'} vs {new_handle or '?'}). "
+                f"{gap}. 신규성 판정에서 재유포를 먼저 본다")
     if d is None:
         return "같은 대상", "날짜를 못 읽었다. 사람이 재게시인지 가른다"
+    if h is None:
+        tail = ". 게시자는 확인 못 함. --handle 을 주면 재유포를 가른다"
+    else:
+        tail = ". 같은 게시자다"
     if d <= SAME_DAYS:
-        return "조건만 다른 같은 건", f"게시 시각 차이 {d}일. 같은 배포로 본다"
-    return "재게시 후보", f"게시 시각 차이 {d}일. 재유포인지 별건인지 가른다"
+        return "조건만 다른 같은 건", f"{gap}. 같은 배포로 본다{tail}"
+    return "재게시 후보", f"{gap}. 재유포인지 별건인지 가른다{tail}"
 
 
 def main() -> None:
@@ -154,6 +174,7 @@ def main() -> None:
     ap.add_argument("--url", default="", help="새 건의 원문 URL. 주면 같은 글인지 가른다")
     ap.add_argument("--org", default="", help="새 건의 대상 조직")
     ap.add_argument("--date", default="", help="새 건의 게시 시각 YYYY-MM-DD")
+    ap.add_argument("--handle", default="", help="새 건의 게시자 핸들. 재유포를 가른다")
     args = ap.parse_args()
 
     ds_id, dbname = find_db(args.db)
@@ -205,20 +226,21 @@ def main() -> None:
                 if s:
                     # 원문 URL 은 자르지 않는다. 완전 동일 건 판별에 통째로 쓴다
                     print(f"  {k}: {s if k == '원문 URL' else s[:90]}")
-        if args.url or args.org or args.date:
+        if args.url or args.org or args.date or args.handle:
             kind, todo = classify(
                 as_text(props.get("원문 URL", {})), as_text(props.get("대상 조직", {})),
                 as_text(props.get("게시 시각", {})) or as_text(props.get("수집일", {})),
-                args.url, args.org, args.date)
+                as_text(props.get("게시자 핸들", {})),
+                args.url, args.org, args.date, args.handle)
             print(f"  >> {kind} — {todo}")
         print()
 
-    if args.url or args.org or args.date:
+    if args.url or args.org or args.date or args.handle:
         print("분류는 참고다. 사람이 확인하고 정한다.")
         print("완전 동일 건이 하나라도 있으면 새 조사를 시작하지 않는다.")
     else:
         print("원문 URL·대상 조직·게시 시각을 주면 분류까지 한다.")
-        print('  --url "<원문 URL>" --org "<대상 조직>" --date YYYY-MM-DD')
+        print('  --url "<원문 URL>" --org "<대상 조직>" --date YYYY-MM-DD --handle "<게시자 핸들>"')
     print("이미 있는 줄이면 새로 채번하지 않는다. 그 줄에 이어 붙인다.")
 
 
