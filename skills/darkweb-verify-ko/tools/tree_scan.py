@@ -21,17 +21,58 @@ from pathlib import Path
 
 BRANCH = re.compile(r"^[\s│├└─|`+\-]*")
 SIZE_LINE = re.compile(r"^\s*(\d+)\s+[\d-]{8,10}\s+[\d:]{5,8}\s+(.+)$")
-NOISE = re.compile(r"^(Archive:|Length|-{3,}|\d+ files?|\s*$)")
+NOISE = re.compile(
+    r"^\s*(Archive:|Length\s+Date|-{3,}|$)"       # 머리말과 구분선
+    r"|^[\s\d,]*\d+\s+files?\s*$"                  # unzip -l 꼬리 합계
+    r"|^[\s\d,]*\d+\s+file\(s\)"                   # dir 명령 꼬리 합계
+)
+HAS_BRANCH = re.compile(r"[│├└]|\|--|`--")
+
+
+def _depth(raw: str) -> int:
+    """tree 출력의 들여쓰기 깊이. 한 단계가 4칸이다."""
+    return len(BRANCH.match(raw).group(0)) // 4
+
+
+def _from_tree(lines: list[str]) -> tuple[list[str], list[str]]:
+    """tree 명령 출력에서 온전한 경로를 되살린다.
+
+    가지 문자만 떼면 상위 디렉터리가 날아가 .git/config 같은 규칙이 안 걸린다.
+    깊이로 스택을 쌓아 이어 붙이고, 자식이 없는 줄만 낸다.
+    디렉터리까지 세면 건수가 부풀어 규모 대조가 어긋난다.
+    """
+    nodes: list[tuple[int, str]] = []
+    dropped: list[str] = []
+    for raw in lines:
+        if NOISE.match(raw):
+            dropped.append(raw)
+            continue
+        name = BRANCH.sub("", raw).strip().rstrip("/")
+        if not name or name.endswith(":"):
+            dropped.append(raw)
+            continue
+        nodes.append((_depth(raw), name))
+
+    paths: list[str] = []
+    stack: list[str] = []
+    for i, (d, name) in enumerate(nodes):
+        del stack[d:]
+        stack.append(name)
+        child = i + 1 < len(nodes) and nodes[i + 1][0] > d
+        if not child:
+            paths.append("/".join(stack))
+    return paths, dropped
 
 
 def parse_tree(text: str) -> tuple[list[str], list[str]]:
     """경로 목록과 못 읽은 줄을 낸다."""
+    lines = [l.rstrip() for l in text.split("\n") if l.strip()]
+    if any(HAS_BRANCH.search(l) for l in lines):
+        return _from_tree(lines)
+
     paths: list[str] = []
     dropped: list[str] = []
-    for raw in text.split("\n"):
-        line = raw.rstrip()
-        if not line.strip():
-            continue
+    for line in lines:
         if NOISE.match(line):
             dropped.append(line)
             continue

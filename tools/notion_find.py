@@ -13,6 +13,8 @@
 from __future__ import annotations
 
 import argparse
+import datetime
+import re
 import time
 
 from notion import _call, search, title_of
@@ -69,11 +71,89 @@ def as_text(prop: dict) -> str:
     return ""
 
 
+def norm_url(u: str) -> str:
+    """같은 글인지 보려고 주소를 다듬는다. tid·aid 는 글을 가리키므로 남긴다."""
+    u = re.sub(r"^https?://", "", (u or "").strip().lower()).rstrip("/")
+    m = re.search(r"[?&](tid|aid|pid)=(\d+)", u)
+    base = u.split("?")[0].split("#")[0]
+    return f"{base}#{m.group(1)}{m.group(2)}" if m else base
+
+
+def days_between(a: str, b: str) -> int | None:
+    """YYYY-MM-DD 두 개의 날짜 차이. 못 읽으면 None."""
+    ra = re.search(r"\d{4}-\d{2}-\d{2}", a or "")
+    rb = re.search(r"\d{4}-\d{2}-\d{2}", b or "")
+    if not ra or not rb:
+        return None
+    fa = datetime.date.fromisoformat(ra.group(0))
+    fb = datetime.date.fromisoformat(rb.group(0))
+    return abs((fa - fb).days)
+
+
+SAME_DAYS = 3
+
+
+TLD = {"www", "co", "kr", "com", "net", "org", "io", "biz", "info"}
+
+
+def org_keys(org: str) -> set[str]:
+    """대상을 가리키는 조각들. 대상 조직 칸에서만 뽑는다.
+
+    원문 URL 에서는 뽑지 않는다. 그것은 포럼 주소라서 같은 포럼 글이
+    전부 같은 대상으로 잡힌다. 거짓 양성은 조사를 잘못 멈추게 한다.
+    """
+    keys: set[str] = set()
+    low = (org or "").lower()
+    for host in re.findall(r"[a-z0-9][a-z0-9\-]*(?:\.[a-z0-9\-]+)+", low):
+        parts = [p for p in host.split(".") if p not in TLD]
+        if parts:
+            keys.add(parts[0])
+    name = re.sub(r"[^0-9a-z가-힣]+", "", re.sub(r"\(.*?\)", " ", low))
+    if len(name) >= 2:
+        keys.add(name)
+    return keys
+
+
+def in_url(org: str, url: str) -> bool:
+    """대상 이름이 주소 안에 들어 있나. 포럼 슬러그가 대상을 담는 경우가 있다."""
+    key = re.sub(r"[^0-9a-z]+", "", re.sub(r"\(.*?\)", " ", (org or "").lower()))
+    if len(key) < 4:
+        return False
+    return key in re.sub(r"[^0-9a-z]+", "", (url or "").lower())
+
+
+def classify(row_url: str, row_org: str, row_date: str,
+             new_url: str, new_org: str, new_date: str) -> tuple[str, str]:
+    """이 줄이 새 건과 어떤 사이인지. (분류, 다음에 할 일)"""
+    if new_url and row_url and norm_url(row_url) == norm_url(new_url):
+        return "완전 동일 건", "새로 채번하지 않는다. 이 줄에 이어 붙인다"
+    if not new_org and not new_url:
+        return "확인 못 함", "새 건의 대상 조직을 --org 로 줘야 가른다"
+
+    a, b = org_keys(row_org), org_keys(new_org)
+    if not b:
+        return "확인 못 함", "새 건에서 대상을 못 읽었다. --org 를 줄 것"
+    if not (a & b):
+        if in_url(new_org, row_url) or in_url(row_org, new_url):
+            return "같은 대상 의심", "이름은 다른데 주소 안에 상대 이름이 있다. 사람이 확인할 것"
+        return "다른 건", "대상이 다르다. 대조 재료로만 본다"
+
+    d = days_between(row_date, new_date)
+    if d is None:
+        return "같은 대상", "날짜를 못 읽었다. 사람이 재게시인지 가른다"
+    if d <= SAME_DAYS:
+        return "조건만 다른 같은 건", f"게시 시각 차이 {d}일. 같은 배포로 본다"
+    return "재게시 후보", f"게시 시각 차이 {d}일. 재유포인지 별건인지 가른다"
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("db", help="DB 이름. 예: 수집, 검증")
     ap.add_argument("query", help="찾을 문자열. 대소문자 무시")
     ap.add_argument("--field", default="", help="이 칸에서만 찾는다")
+    ap.add_argument("--url", default="", help="새 건의 원문 URL. 주면 같은 글인지 가른다")
+    ap.add_argument("--org", default="", help="새 건의 대상 조직")
+    ap.add_argument("--date", default="", help="새 건의 게시 시각 YYYY-MM-DD")
     args = ap.parse_args()
 
     ds_id, dbname = find_db(args.db)
@@ -117,14 +197,28 @@ def main() -> None:
         print(f"  링크  {r.get('url', '')}")
         for k, s in matched:
             print(f"  일치  {k}: {s[:90]}")
-        for k in ("대상 조직", "게시자 핸들", "상태", "수집일", "게시 시각",
-                  "주장 규모", "검증 분류", "진위 판정", "검증일"):
+        for k in ("대상 조직", "게시 플랫폼", "원문 URL", "게시자 핸들", "상태",
+                  "수집일", "게시 시각", "주장 규모", "샘플",
+                  "검증 분류", "진위 판정", "검증일"):
             if k in props:
                 s = as_text(props[k])
                 if s:
-                    print(f"  {k}: {s[:90]}")
+                    # 원문 URL 은 자르지 않는다. 완전 동일 건 판별에 통째로 쓴다
+                    print(f"  {k}: {s if k == '원문 URL' else s[:90]}")
+        if args.url or args.org or args.date:
+            kind, todo = classify(
+                as_text(props.get("원문 URL", {})), as_text(props.get("대상 조직", {})),
+                as_text(props.get("게시 시각", {})) or as_text(props.get("수집일", {})),
+                args.url, args.org, args.date)
+            print(f"  >> {kind} — {todo}")
         print()
 
+    if args.url or args.org or args.date:
+        print("분류는 참고다. 사람이 확인하고 정한다.")
+        print("완전 동일 건이 하나라도 있으면 새 조사를 시작하지 않는다.")
+    else:
+        print("원문 URL·대상 조직·게시 시각을 주면 분류까지 한다.")
+        print('  --url "<원문 URL>" --org "<대상 조직>" --date YYYY-MM-DD')
     print("이미 있는 줄이면 새로 채번하지 않는다. 그 줄에 이어 붙인다.")
 
 
