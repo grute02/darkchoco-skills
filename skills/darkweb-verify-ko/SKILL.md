@@ -209,6 +209,7 @@ mysqldump 는 한 줄이 수 MB 다. 앞부분만 읽으면 표 구조도 규모
     tools/tree_scan.py      파일 경로 목록 분석
     tools/tree_rules.json   트리 규칙
     tools/db_tree.py        SQL 덤프의 표 구조 분석
+    tools/sample_stats.py   샘플 값 분포와 합성 의심
 
 경로가 안 잡히면 스킬 폴더를 기준으로 부른다.
 
