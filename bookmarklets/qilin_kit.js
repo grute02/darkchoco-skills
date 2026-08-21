@@ -1,0 +1,349 @@
+/* 킬린 유출 사이트 수집 도구 v1
+   forum kit 은 MyBB·XenForo 전용이라 여기서 안 돈다. 구조가 달라서 따로 만들었다.
+
+   목록 페이지에서 누르면 피해자 카드를 자동으로 읽는다. 네트워크를 안 쓴다.
+   여러 쪽을 모으려면 버튼을 눌러야 한다. 실수로 요청이 나가는 것을 막으려는 것이다.
+   요청 간격은 2.5~5초다. 줄이지 마라. 계정과 회선을 셋이 공유한다.
+
+   파일을 내려받지 않는다. 다운로드 링크는 존재만 기록한다.
+   2026-08-20 다크초코 */
+(() => {
+  const VER = 'qilin kit v1';
+  if (window.__QK) { try { window.__QK.remove(); } catch (e) {} window.__QK = null; }
+
+  const T = e => (e ? (e.innerText || e.textContent || '') : '').replace(/ /g, ' ').replace(/\s+/g, ' ').trim();
+  const HREF = a => (a && a.getAttribute('href')) || '';
+  const TODAY = new Date().toISOString().slice(0, 10);
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const CHAL = /cf[-_]chl|cf_chl_opt|Just a moment|Checking your browser|__cf_chl|Attention Required/i;
+
+  const CLUE = {
+    onion: /\b[a-z2-7]{16,56}\.onion\b/g,
+    tg: /(?:t\.me|telegram\.me)\/[\w+\-\/]+/g,
+    btc: /\b(bc1[a-z0-9]{25,62}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})\b/g,
+    xmr: /\b4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}\b/g,
+    email: /([\w.+-]{1,64})@([\w-]+\.[\w.]{2,})/g,
+    host: /\b(?:gofile\.io|mega\.nz|anonfiles?\w*\.com|file\.io|pixeldrain\.com|mediafire\.com|dropbox\.com|qu\.ax)\S*/g,
+    size: /\b\d+(?:\.\d+)?\s?(?:GB|TB|MB)\b/gi,
+    rows: /\b\d{1,3}(?:,\d{3})+\b/g
+  };
+  const clues = {};
+  const grab = txt => {
+    for (const k of Object.keys(CLUE)) {
+      const hit = txt.match(CLUE[k]) || [];
+      if (hit.length) { clues[k] = clues[k] || new Set(); hit.forEach(v => clues[k].add(v)); }
+    }
+  };
+
+  const cardsOf = doc => [...doc.querySelectorAll('div[data-key], .item_box')]
+    .map(el => (el.classList && el.classList.contains('item_box')) ? (el.closest('[data-key]') || el) : el)
+    .filter((el, i, all) => all.indexOf(el) === i);
+
+  const parseCard = el => {
+    const uuidA = [...el.querySelectorAll('a[href*="uuid="]')][0];
+    const slugA = [...el.querySelectorAll('a[href^="/c/"]')][0];
+    const titleA = el.querySelector('.item_box-title') || uuidA;
+    const links = [...el.querySelectorAll('a[href]')];
+    const zoom = links.find(a => /zoominfo\.com/i.test(HREF(a)));
+    const site = links.find(a => /^https?:\/\//i.test(HREF(a)) && !/zoominfo\.com/i.test(HREF(a)));
+    const txt = T(el);
+    const dateEl = [...el.querySelectorAll('div,span,p')].find(d => d.querySelector('img[src*="clock"]'));
+    const dm = (dateEl ? T(dateEl) : txt).match(/\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}\b/i);
+    const pm = txt.match(/(\d+)\s*photos?/i);
+    const sector = T(el.querySelector('p.item_box-info'));
+    const uuid = (HREF(uuidA).match(/uuid=([0-9a-f-]{8,})/i) || [])[1] || '';
+    const slugM = HREF(slugA).match(/^\/c\/([^\/]+)\/(\d+)/);
+    return {
+      key: el.getAttribute('data-key') || '',
+      name: T(titleA),
+      sector: sector,
+      uuid: uuid,
+      slug: slugM ? slugM[1] : '',
+      slugN: slugM ? slugM[2] : '',
+      site: site ? HREF(site) : '',
+      zoom: zoom ? HREF(zoom) : '',
+      date: dm ? dm[0] : '',
+      photos: pm ? parseInt(pm[1], 10) : null,
+      detail: uuid ? '/site/blog?uuid=' + uuid : HREF(slugA)
+    };
+  };
+
+  const norm = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  const dupReport = rows => {
+    const out = [];
+    const byName = new Map();
+    const bySlug = new Map();
+    rows.forEach(r => {
+      const n = norm(r.name);
+      if (n) { byName.set(n, (byName.get(n) || []).concat([r])); }
+      if (r.slug) { bySlug.set(r.slug, (bySlug.get(r.slug) || []).concat([r])); }
+    });
+    const sameName = [...byName.values()].filter(v => v.length > 1);
+    const sameSlug = [...bySlug.values()].filter(v => v.length > 1);
+    out.push('## 중복 검사');
+    out.push('');
+    if (!sameName.length && !sameSlug.length) {
+      out.push('같은 조직이 두 번 이상 올라온 건이 없다. 이번 범위 안에서만 그렇다.');
+      out.push('');
+      return out.join('\n');
+    }
+    sameName.forEach(g => {
+      out.push('- 같은 이름 ' + g.length + '건 : ' + g[0].name);
+      g.forEach(r => out.push('    ' + (r.date || '날짜없음') + '  uuid=' + (r.uuid || '없음') + '  slug=' + (r.slug || '없음') + (r.slugN ? '/' + r.slugN : '')));
+      const u = new Set(g.map(r => r.uuid).filter(Boolean));
+      const d = new Set(g.map(r => r.date).filter(Boolean));
+      out.push('    판정 : ' + (u.size > 1 ? (d.size > 1 ? '재게시 후보. uuid 도 날짜도 다름' : 'uuid 만 다름. 같은 날') : '같은 uuid. 주소만 여럿'));
+    });
+    sameSlug.forEach(g => {
+      const ns = new Set(g.map(r => r.slugN));
+      if (ns.size > 1) { out.push('- 같은 slug 에 번호가 여럿 : ' + g[0].slug + ' -> ' + [...ns].join(', ')); }
+    });
+    out.push('');
+    return out.join('\n');
+  };
+
+  const render = (rows, meta) => {
+    const L = [];
+    L.push('# 킬린 유출 사이트 수집');
+    L.push('');
+    L.push('- 도구 : ' + VER);
+    L.push('- URL : ' + location.href);
+    L.push('- 확인 : ' + TODAY + (NAME.value ? ' ' + NAME.value : ''));
+    L.push('- ' + meta);
+    L.push('- 피해자 ' + rows.length + '건');
+    L.push('');
+    L.push(dupReport(rows));
+    L.push('## 증거가 붙은 건');
+    L.push('');
+    const withPhoto = rows.filter(r => r.photos > 0);
+    if (withPhoto.length) {
+      withPhoto.forEach(r => L.push('- ' + r.name + '  ' + r.photos + ' photos  ' + r.detail));
+      L.push('');
+      L.push('photos 가 파일 목록 캡처면 트리 분석 재료다. 상세를 열어 확인할 것.');
+    } else {
+      L.push('없음. 이번 범위의 건은 전부 주장뿐이다.');
+    }
+    L.push('');
+    const noSite = rows.filter(r => !r.site).length;
+    L.push('## 대상 특정');
+    L.push('');
+    L.push('- 공식 URL 있음 : ' + (rows.length - noSite) + ' / ' + rows.length);
+    L.push('- ZoomInfo 있음 : ' + rows.filter(r => r.zoom).length + ' / ' + rows.length);
+    L.push('');
+    L.push('공격자가 공식 도메인을 직접 적어준다. 2단계 대상 문자열 일치에 그대로 쓴다.');
+    L.push('');
+    const ck = Object.keys(clues);
+    if (ck.length) {
+      L.push('## 추출된 단서');
+      L.push('');
+      ck.forEach(k => L.push('- ' + k + ' (' + clues[k].size + ') : ' + [...clues[k]].slice(0, 12).join(' · ')));
+      L.push('');
+    }
+    L.push('---- TSV (조직 · 업종 · 날짜 · photos · uuid · slug · 공식URL · ZoomInfo · 상세) ----');
+    rows.forEach(r => L.push([r.name, r.sector, r.date, r.photos == null ? '' : r.photos, r.uuid, r.slug + (r.slugN ? '/' + r.slugN : ''), r.site, r.zoom, r.detail].join('\t')));
+    return L.join('\n');
+  };
+
+  const detail = () => {
+    const L = [];
+    const body = T(document.body);
+    grab(body);
+    L.push('# 킬린 상세');
+    L.push('');
+    L.push('- 도구 : ' + VER);
+    L.push('- URL : ' + location.href);
+    L.push('- TITLE : ' + document.title);
+    L.push('- 확인 : ' + TODAY + (NAME.value ? ' ' + NAME.value : ''));
+    L.push('');
+    const imgs = [...document.querySelectorAll('img')].map(i => i.getAttribute('src') || '').filter(s => /\/uploads\//.test(s));
+    L.push('## 올라온 이미지 ' + imgs.length + '개');
+    L.push('');
+    imgs.slice(0, 40).forEach(s => L.push('- ' + s));
+    L.push('');
+    L.push('이미지는 내려받지 않는다. 주소만 기록한다.');
+    L.push('');
+    const dl = [...document.querySelectorAll('a[href]')].map(a => HREF(a)).filter(h => /\.(zip|rar|7z|tar|gz)(\?|$)|gofile|mega\.nz|torrent/i.test(h));
+    L.push('## 다운로드로 보이는 링크 ' + dl.length + '개');
+    L.push('');
+    L.push(dl.length ? dl.map(h => '- ' + h).join('\n') : '없음');
+    L.push('');
+    L.push('링크는 존재만 기록한다. 받지 않는다.');
+    L.push('');
+    const ck = Object.keys(clues);
+    if (ck.length) {
+      L.push('## 추출된 단서');
+      L.push('');
+      ck.forEach(k => L.push('- ' + k + ' (' + clues[k].size + ') : ' + [...clues[k]].slice(0, 20).join(' · ')));
+      L.push('');
+    }
+    L.push('## 본문');
+    L.push('');
+    L.push('```');
+    L.push(body.slice(0, 6000));
+    L.push('```');
+    return { md: L.join('\n'), status: '상세 · 이미지 ' + imgs.length + ' · 단서 ' + ck.length + '종' };
+  };
+
+  const looksPath = s => {
+    if (!s || s.length > 240) { return false; }
+    if (/^https?:\/\//i.test(s)) { return false; }
+    if (/\s{2,}/.test(s)) { return false; }
+    return /\.[A-Za-z0-9]{1,6}$/.test(s) || /[\\\/]/.test(s);
+  };
+
+  const tree = () => {
+    const L = [];
+    const hits = [];
+    const seen = new Set();
+    const push = (p, how) => {
+      const v = p.replace(/^\.?[\\\/]+/, '').trim();
+      if (!v || seen.has(v)) { return; }
+      seen.add(v);
+      hits.push({ p: v, how: how });
+    };
+    [...document.querySelectorAll('body *')].forEach(el => {
+      if (el.children.length) { return; }
+      const t = T(el);
+      if (looksPath(t)) { push(t, el.tagName.toLowerCase() + (el.className && typeof el.className === 'string' ? '.' + el.className.trim().split(/\s+/)[0] : '')); }
+    });
+    [...document.querySelectorAll('a[href]')].forEach(a => {
+      const h = HREF(a);
+      const m = h.match(/[?&](?:path|file|f|p)=([^&]+)/i);
+      if (m) { try { push(decodeURIComponent(m[1]), 'href 질의'); } catch (e) { push(m[1], 'href 질의'); } }
+    });
+    const byHow = {};
+    hits.forEach(h => { byHow[h.how] = (byHow[h.how] || 0) + 1; });
+    L.push('# 파일 목록 뽑기');
+    L.push('');
+    L.push('- 도구 : ' + VER);
+    L.push('- URL : ' + location.href);
+    L.push('- 확인 : ' + TODAY + (NAME.value ? ' ' + NAME.value : ''));
+    L.push('- 경로로 보이는 것 ' + hits.length + '건');
+    L.push('');
+    if (!hits.length) {
+      L.push('경로가 안 잡혔다. 아래 중 하나다.');
+      L.push('');
+      L.push('- 파일 목록이 이미지다. 화면을 캡처해서 사람이 읽어야 한다');
+      L.push('- 자바스크립트로 나중에 그린다. 다 뜬 뒤 다시 누른다');
+      L.push('- 구조가 예상과 다르다. probe_generic 을 돌려 화면을 공유할 것');
+      L.push('');
+      const imgs = [...document.querySelectorAll('img')].map(i => i.getAttribute('src') || '').filter(Boolean);
+      L.push('## 이 화면의 이미지 ' + imgs.length + '개');
+      L.push('');
+      imgs.slice(0, 30).forEach(s => L.push('- ' + s));
+      return { md: L.join('\n'), status: '경로 0건 · 이미지 ' + imgs.length + '개' };
+    }
+    L.push('## 어디서 나왔나');
+    L.push('');
+    Object.keys(byHow).sort((a, b) => byHow[b] - byHow[a]).slice(0, 8).forEach(k => L.push('- ' + byHow[k] + '건  ' + k));
+    L.push('');
+    L.push('한 갈래만 진짜 목록일 수 있다. 아래 경로를 보고 아닌 갈래는 지울 것.');
+    L.push('');
+    L.push('## tree_scan.py 에 넣을 것');
+    L.push('');
+    L.push('```');
+    hits.forEach(h => L.push(h.p));
+    L.push('```');
+    L.push('');
+    L.push('위 블록만 파일로 저장한 뒤 아래를 돈다.');
+    L.push('');
+    L.push('    python 06_도구/tools/tree_scan.py <파일> --md 출력.md');
+    return { md: L.join('\n'), status: '경로 ' + hits.length + '건 · 갈래 ' + Object.keys(byHow).length };
+  };
+
+  const listHere = () => {
+    const rows = cardsOf(document).map(parseCard).filter(r => r.name);
+    grab(T(document.body));
+    return { md: render(rows, '이 쪽만'), status: '목록 ' + rows.length + '건 (이 쪽만)', rows: rows };
+  };
+
+  const listAll = async () => {
+    const want = Math.max(1, parseInt(MAXP.value, 10) || 3);
+    const seen = new Set();
+    let rows = cardsOf(document).map(parseCard).filter(r => r.name);
+    rows.forEach(r => seen.add(r.uuid || r.name));
+    grab(T(document.body));
+    let stopped = '';
+    for (let p = 2; p <= want; p++) {
+      if (ABORT) { stopped = '사용자 중단'; break; }
+      say('여러 쪽 모으는 중 ' + p + '/' + want + ' · 누적 ' + rows.length + '건');
+      await sleep(2500 + Math.random() * 2500);
+      try {
+        const res = await fetch('/?page=' + p, { credentials: 'same-origin' });
+        const txt = await res.text();
+        if (CHAL.test(txt.slice(0, 6000))) { stopped = 'Cloudflare 챌린지. 즉시 멈춤'; break; }
+        if (res.status === 429 || res.status === 503) { stopped = 'HTTP ' + res.status + ' 레이트리밋 의심. 즉시 멈춤'; break; }
+        if (!res.ok) { stopped = 'HTTP ' + res.status; break; }
+        const doc = new DOMParser().parseFromString(txt, 'text/html');
+        const got = cardsOf(doc).map(parseCard).filter(r => r.name);
+        if (!got.length) { stopped = p + '쪽에서 카드 0건. 마지막 쪽으로 본다'; break; }
+        got.forEach(r => { const k = r.uuid || r.name; if (!seen.has(k)) { seen.add(k); rows.push(r); } });
+        grab(T(doc.body));
+      } catch (e) { stopped = '요청 실패 ' + e; break; }
+    }
+    return { md: render(rows, '여러 쪽' + (stopped ? ' · 중단 : ' + stopped : ' · ' + want + '쪽까지')), status: '목록 ' + rows.length + '건' + (stopped ? ' · ' + stopped : ''), rows: rows };
+  };
+
+  let ABORT = false, BUSY = false;
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;inset:4%;z-index:2147483647;background:#111;color:#eee;border:2px solid #666;padding:8px;display:flex;flex-direction:column;gap:6px;font:13px sans-serif';
+  const bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;gap:6px;align-items:center;flex-wrap:wrap';
+  const st = document.createElement('span');
+  st.style.cssText = 'flex:1;min-width:200px;color:#0f0;font:12px monospace';
+  const ta = document.createElement('textarea');
+  ta.style.cssText = 'flex:1;width:100%;background:#000;color:#0f0;font:12px monospace;border:1px solid #444';
+  const say = s => { st.textContent = s; };
+  const put = s => { ta.value = s; ta.focus(); ta.select(); };
+  const mk = (label, fn, hot) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.style.cssText = 'padding:3px 9px;cursor:pointer;font:12px sans-serif;' + (hot ? 'background:#0a4;color:#fff;border:1px solid #0f8;font-weight:bold' : 'background:#333;color:#ddd;border:1px solid #555');
+    b.onclick = async () => {
+      if (BUSY) { say('실행 중이다. 끝나거나 중단한 뒤에 누를 것'); return; }
+      BUSY = true; ABORT = false;
+      try { const r = await fn(); put(r.md); say(r.status + ' · Ctrl+C'); }
+      catch (e) { say('오류 : ' + e); put('오류\n\n' + (e && e.stack || e)); }
+      BUSY = false;
+    };
+    return b;
+  };
+  const inp = (label, val, size) => {
+    const l = document.createElement('label');
+    l.style.cssText = 'display:flex;gap:3px;align-items:center;font:12px sans-serif;color:#aaa';
+    const i = document.createElement('input');
+    i.value = val; i.size = size;
+    i.style.cssText = 'background:#000;color:#0f0;border:1px solid #444;font:12px monospace;width:' + (9 * size) + 'px';
+    l.append(document.createTextNode(label), i);
+    l.__i = i;
+    return l;
+  };
+  const maxWrap = inp('몇 쪽까지', '3', 3);
+  const nameWrap = inp('확인자', '', 7);
+  const MAXP = maxWrap.__i;
+  const NAME = nameWrap.__i;
+  const stopB = document.createElement('button');
+  stopB.textContent = '중단';
+  stopB.style.cssText = 'padding:3px 9px;cursor:pointer;font:12px sans-serif;background:#422;color:#fdd;border:1px solid #855';
+  stopB.onclick = () => { ABORT = true; say('중단 요청. 현재 요청이 끝나면 멈춘다'); };
+  const closeB = document.createElement('button');
+  closeB.textContent = '닫기';
+  closeB.style.cssText = 'padding:3px 9px;cursor:pointer;font:12px sans-serif;background:#422;color:#fdd;border:1px solid #855';
+  closeB.onclick = () => box.remove();
+
+  const isDetail = /\/site\/blog\?uuid=|\/c\/[^\/]+\/\d+/.test(location.href);
+  const bList = mk('이 쪽 목록', listHere, !isDetail);
+  const bAll = mk('여러 쪽 모으기', listAll, false);
+  const bDetail = mk('이 건 상세', async () => detail(), isDetail);
+  const bTree = mk('파일 목록 뽑기', async () => tree(), false);
+
+  bar.append(bList, bAll, bDetail, bTree, maxWrap, nameWrap, st, stopB, closeB);
+  box.append(bar, ta);
+  document.body.appendChild(box);
+  window.__QK = box;
+
+  say(VER + ' · ' + (isDetail ? '상세 페이지로 판정' : '목록 페이지로 판정') + ' · 카드 ' + cardsOf(document).length + '개');
+  ta.value = '실행 중';
+  (isDetail ? bDetail : bList).click();
+})()

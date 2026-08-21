@@ -219,7 +219,9 @@ def describe(name: str, kind: str, vals: list[str], total: int) -> list[str]:
     elif kind == "숫자" and filled:
         nums = sorted(int(float(v)) for v in vals if PAT["숫자"].match(v))
         if nums:
-            out.append(f"  범위      {nums[0]} ~ {nums[-1]}")
+            lo, hi = len(str(abs(nums[0]))), len(str(abs(nums[-1])))
+            out.append(f"  자릿수    {lo}자리 ~ {hi}자리"
+                       + (" · 음수 있음" if nums[0] < 0 else ""))
             step = [b - a for a, b in zip(nums, nums[1:])]
             if step and all(s == 1 for s in step):
                 out.append("  주의      1씩 연속 증가한다. 자동 채번이거나 생성값일 수 있다")
