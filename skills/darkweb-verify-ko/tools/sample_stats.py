@@ -40,7 +40,10 @@ PAT = {
     "날짜": re.compile(r"^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}"),
     "숫자": re.compile(r"^-?\d+(\.\d+)?$"),
     "우편번호": re.compile(r"^\d{5}$|^\d{3}-\d{3}$"),
-    "주소": re.compile(r"(시|도|구|군|읍|면|동|로|길)\s*\d*"),
+    # 행정구역 접미 뒤에 공백이 오거나 도로명 뒤에 번호가 오는 것만 본다.
+    # 옛 규칙은 (시|도|구|...) 한 글자라 아무 한글 문장에나 걸렸다.
+    "주소": re.compile(r"[가-힣]{2,10}(?:특별시|광역시|특별자치[시도]|[시군구])\s"
+                       r"|[가-힣]{2,10}(?:대?로|길)\s*\d"),
     "한글이름": re.compile(r"^[가-힣]{2,5}$"),
 }
 NULLS = {"", "null", "NULL", "\\N", "None", "-"}
@@ -160,19 +163,36 @@ def read_sql(path: Path, limit: int, table: str) -> tuple[list[str], list[list[s
     return header, rows
 
 
+ADDR_MAX = 120     # 주소는 이보다 길지 않다
+LONG_TEXT = 1000   # 이보다 긴 값이 있고 가운뎃값도 크면 자유 서술로 본다
+
+
 def guess(vals: list[str]) -> str:
     """빈 값을 뺀 값들로 종류를 고른다. 가장 많이 맞는 하나."""
     if not vals:
         return "빈 칸"
+    sample = vals[:2000]
+    L = sorted(len(v) for v in sample)
+    med = L[len(L) // 2]
+
+    # 게시판 본문 같은 자유 서술을 먼저 가른다.
+    # 안 그러면 주소 규칙이 긴 한글 문장에 걸려 개인정보 칸으로 계상된다.
+    if med > ADDR_MAX or (L[-1] > LONG_TEXT and med > 40):
+        return "긴 텍스트"
+
     score = Counter()
-    for v in vals[:2000]:
+    for v in sample:
         for name, rx in PAT.items():
-            if rx.match(v) if name != "주소" else rx.search(v):
+            if name == "주소":
+                ok = len(v) <= ADDR_MAX and rx.search(v)
+            else:
+                ok = rx.match(v)
+            if ok:
                 score[name] += 1
     if not score:
-        return "기타 문자열"
+        return "긴 텍스트" if L[-1] > 200 else "기타 문자열"
     name, n = score.most_common(1)[0]
-    return name if n >= len(vals[:2000]) * 0.5 else "혼합"
+    return name if n >= len(sample) * 0.5 else "혼합"
 
 
 def describe(name: str, kind: str, vals: list[str], total: int) -> list[str]:
@@ -229,6 +249,9 @@ def describe(name: str, kind: str, vals: list[str], total: int) -> list[str]:
         sur = Counter(v[0] for v in vals)
         out.append(f"  성씨      {len(sur)}종 · 최다 {sur.most_common(1)[0][1]}건 "
                    f"({sur.most_common(1)[0][1]*100//filled}%)")
+    elif kind == "긴 텍스트" and filled:
+        out.append("  주의      자유 서술이다. 칸 단위로는 개인정보 여부를 못 가른다")
+        out.append("            안에 이름·전화·주소가 섞일 수 있다. 사람이 표본을 봐야 한다")
     elif kind == "주소" and filled:
         head = Counter(v.split()[0] for v in vals if v.split())
         out.append(f"  앞 단어    {len(head)}종 · 최다 {head.most_common(1)[0][1]}건")

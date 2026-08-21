@@ -88,6 +88,15 @@ def parse_tree(text: str) -> tuple[list[str], list[str]]:
     return paths, dropped
 
 
+def rrn_ok(s: str) -> bool:
+    """주민등록번호 체크섬. 13자리가 아니면 판단하지 않는다."""
+    d = re.sub(r"[^0-9]", "", s)
+    if len(d) != 13:
+        return False
+    w = [2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5]
+    return (11 - sum(int(d[i]) * w[i] for i in range(12)) % 11) % 10 == int(d[12])
+
+
 def mask_path(p: str, pattern: re.Pattern) -> str:
     """개인정보가 걸린 부분만 가린다. 경로 구조는 남긴다."""
     return pattern.sub(lambda m: m.group(0)[0] + "○" * (len(m.group(0)) - 1), p)
@@ -124,9 +133,16 @@ def scan(paths: list[str], rules: dict) -> dict:
     pii: list[tuple[str, str]] = []
     for p in paths:
         for r in rules["파일명개인정보"]:
-            if r["_re"].search(p):
-                pii.append((mask_path(p, r["_re"]), r["이름"]))
-                break
+            m = r["_re"].search(p)
+            if not m:
+                continue
+            tag = r["이름"]
+            if "주민" in r["이름"]:
+                # 날짜 형태만 맞고 체크섬이 틀리면 그냥 숫자열일 수 있다.
+                # 백업 파일명의 타임스탬프가 여기 걸리곤 한다.
+                tag += " · 체크섬 맞음" if rrn_ok(m.group(0)) else " · 체크섬 틀림"
+            pii.append((mask_path(p, r["_re"]), tag))
+            break
 
     ext: Counter = Counter()
     for p in paths:
