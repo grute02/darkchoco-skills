@@ -75,7 +75,24 @@
   const ta = document.createElement('textarea');
   ta.style.cssText = 'flex:1;width:100%;background:#000;color:#0f0;font:12px monospace;border:1px solid #444';
   ta.value = out.join('\n');
-  bar.append(st, x);
+
+  /* ── 최소화. 접어도 상태와 중단은 남긴다 ────── */
+  let MINI = false;
+  const miniB = document.createElement('button');
+  miniB.textContent = '최소화';
+  miniB.setAttribute('data-mini', '1');
+  miniB.style.cssText = 'padding:3px 9px;cursor:pointer;font:12px sans-serif;background:#333;color:#ddd;border:1px solid #555';
+  const KEEP = [st, miniB, x];
+  miniB.onclick = () => {
+    MINI = !MINI;
+    box.style.inset = MINI ? 'auto 10px 10px auto' : '4%';
+    box.style.maxWidth = MINI ? '52vw' : '';
+    ta.style.display = MINI ? 'none' : '';
+    [...bar.children].forEach(c => { c.style.display = (MINI && KEEP.indexOf(c) < 0) ? 'none' : ''; });
+    miniB.textContent = MINI ? '펼치기' : '최소화';
+  };
+
+  bar.append(st, miniB, x);
   box.append(bar, ta);
   document.body.appendChild(box);
   ta.focus();

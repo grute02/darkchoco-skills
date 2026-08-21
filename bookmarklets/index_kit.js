@@ -264,7 +264,24 @@
   closeB.style.cssText = 'padding:3px 9px;cursor:pointer;font:12px sans-serif;background:#422;color:#fdd;border:1px solid #855';
   closeB.onclick = () => box.remove();
 
-  bar.append(bHere, bWalk, bPaths, bTsv, dWrap, rWrap, st, stopB, closeB);
+
+  /* ── 최소화. 접어도 상태와 중단은 남긴다 ────── */
+  let MINI = false;
+  const miniB = document.createElement('button');
+  miniB.textContent = '최소화';
+  miniB.setAttribute('data-mini', '1');
+  miniB.style.cssText = 'padding:3px 9px;cursor:pointer;font:12px sans-serif;background:#333;color:#ddd;border:1px solid #555';
+  const KEEP = [st, miniB, stopB, closeB];
+  miniB.onclick = () => {
+    MINI = !MINI;
+    box.style.inset = MINI ? 'auto 10px 10px auto' : '4%';
+    box.style.maxWidth = MINI ? '52vw' : '';
+    ta.style.display = MINI ? 'none' : '';
+    [...bar.children].forEach(c => { c.style.display = (MINI && KEEP.indexOf(c) < 0) ? 'none' : ''; });
+    miniB.textContent = MINI ? '펼치기' : '최소화';
+  };
+
+  bar.append(bHere, bWalk, bPaths, bTsv, dWrap, rWrap, st, stopB, miniB, closeB);
   box.append(bar, ta);
   document.body.appendChild(box);
   window.__IK = box;
