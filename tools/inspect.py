@@ -42,6 +42,20 @@ MAGIC = [
     (b"SQLite format 3",     "sqlite 파일"),
 ]
 
+# 종류마다 어울리는 확장자. 여기 없으면 이름을 속인 것으로 본다
+EXT_OK = {
+    "실행 파일(MZ)": {".exe", ".dll", ".sys", ".msi", ".scr", ".ocx"},
+    "실행 파일(ELF)": {".so", ".elf", ".bin", ""},
+    "실행 파일(Mach-O)": {".dylib", ".bin", ""},
+    "zip 계열(zip·docx·xlsx·jar)": {".zip", ".docx", ".xlsx", ".pptx", ".jar",
+                                    ".apk", ".odt", ".ods", ".epub", ".whl"},
+    "rar": {".rar"}, "7z": {".7z"}, "gzip": {".gz", ".tgz", ".tar"},
+    "bzip2": {".bz2"}, "xz": {".xz"}, "pdf": {".pdf"},
+    "옛 office(doc·xls·ppt)": {".doc", ".xls", ".ppt", ".hwp", ".msg"},
+    "rtf": {".rtf"}, "png": {".png"}, "jpeg": {".jpg", ".jpeg"},
+    "sqlite 파일": {".db", ".sqlite", ".sqlite3"},
+}
+
 # 텍스트일 때 확장자로 도구를 고른다
 TOOL = {
     ".sql": "db_tree",
@@ -75,6 +89,16 @@ def sniff(path: Path) -> tuple[str, str]:
         except UnicodeDecodeError:
             continue
     return "이진", "utf-8 도 cp949 도 아니다"
+
+
+def lied(path: Path, kind: str) -> bool:
+    """확장자가 실제 종류와 어긋나나. 이름을 속인 파일이 제일 위험하다."""
+    if kind in (SAFE, "빈 파일", "못 읽음"):
+        return False
+    ok = EXT_OK.get(kind)
+    if ok is None:
+        return False
+    return path.suffix.lower() not in ok
 
 
 def human(n: int) -> str:
@@ -126,9 +150,10 @@ def main() -> None:
         rows.append({"path": p, "rel": p.relative_to(case).as_posix(),
                      "kind": kind, "why": why, "size": p.stat().st_size,
                      "tool": TOOL.get(p.suffix.lower(), "") if kind == SAFE else "",
-                     "done": "", "note": ""})
+                     "fake": lied(p, kind), "done": "", "note": ""})
 
-    risky = [r for r in rows if r["kind"] not in (SAFE, "빈 파일")]
+    faked = [r for r in rows if r["fake"]]
+    skipped_kind = [r for r in rows if r["kind"] not in (SAFE, "빈 파일") and not r["fake"]]
 
     # ── 2. 파일 목록을 tree_scan 에 태운다 ───────────
     listing = out / "_경로목록.txt"
@@ -171,19 +196,30 @@ def main() -> None:
     L.append("파일 %d개 · %s" % (len(rows), human(total)))
     L.append("")
 
-    if risky:
-        L.append("## 위험 파일 %d건. 건드리지 않았다" % len(risky))
+    if faked:
+        L.append("## 이름을 속인 파일 %d건" % len(faked))
         L.append("")
         L.append("| 파일 | 확장자 | 실제 종류 | 크기 |")
         L.append("|---|---|---|---|")
-        for r in risky:
+        for r in faked:
             L.append("| %s | %s | **%s** | %s |"
                      % (r["rel"], r["path"].suffix or "없음", r["kind"], human(r["size"])))
         L.append("")
-        L.append("**확장자와 실제 종류가 다르면 사람이 먼저 본다.** 유출물은 이름을 속인다.")
+        L.append("**확장자와 실제 종류가 어긋난다. 사람이 먼저 본다.**")
         L.append("")
     else:
-        L.append("## 위험 파일 없음. 전부 텍스트로 확인됐다")
+        L.append("## 이름을 속인 파일 없음")
+        L.append("")
+
+    if skipped_kind:
+        L.append("## 텍스트가 아니라 안 다룬 것 %d건" % len(skipped_kind))
+        L.append("")
+        L.append("| 파일 | 실제 종류 | 크기 |")
+        L.append("|---|---|---|")
+        for r in skipped_kind:
+            L.append("| %s | %s | %s |" % (r["rel"], r["kind"], human(r["size"])))
+        L.append("")
+        L.append("이름과 종류는 맞다. 이 흐름에서 다루지 않을 뿐이다.")
         L.append("")
 
     L.append("## 파일별")
@@ -209,15 +245,16 @@ def main() -> None:
     L.append("- `트리.md` 에서 등급이 높은 경로부터 본다")
     L.append("- 구조 md 에서 개인정보 칸이 많은 표를 고른다")
     L.append("- 그 표를 `sample_stats <덤프> --table <표>` 로 따로 돌린다")
-    if risky:
-        L.append("- **위험 파일은 이 흐름에 넣지 않는다.** 별도로 다룬다")
+    if faked:
+        L.append("- **이름을 속인 파일은 이 흐름에 넣지 않는다.** 별도로 다룬다")
     L.append("")
 
     (out / "00_요약.md").write_text("\n".join(L) + "\n", encoding="utf-8")
 
     print("케이스   %s" % case.name)
     print("파일     %d개 · %s" % (len(rows), human(total)))
-    print("위험     %d건" % len(risky))
+    print("속인 것  %d건" % len(faked))
+    print("안 다룸  %d건" % len(skipped_kind))
     print("만든 것  %d개" % (len(made) + (1 if tree_ok else 0)))
     print("요약     %s" % (out / "00_요약.md"))
 
