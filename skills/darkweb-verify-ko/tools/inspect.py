@@ -4,6 +4,9 @@
     python tools/inspect.py <케이스폴더>
     python tools/inspect.py <케이스폴더> --out <결과폴더>
 
+결과는 **케이스 폴더 옆에 두지 않는다.** 지금 폴더의 `07_케이스/<케이스이름>/` 에 쓴다.
+공유폴더는 통로라서 분석이 끝나면 비운다. 결과가 거기 있으면 같이 지워진다.
+
 파일마다 **앞바이트로 진짜 종류를 판정하고** 종류에 맞는 도구를 돌린다.
 실행 파일과 압축과 문서는 건드리지 않고 경고만 적는다.
 
@@ -128,7 +131,7 @@ def run(tool: str, args: list[str]) -> tuple[bool, str]:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("case", help="케이스 폴더")
-    ap.add_argument("--out", default="", help="결과 폴더. 안 주면 <케이스>_분석")
+    ap.add_argument("--out", default="", help="결과 폴더. 안 주면 <지금폴더>/07_케이스/<케이스이름>")
     ap.add_argument("--rows", type=int, default=0, help="샘플에서 읽을 행 상한. 0이면 전부")
     args = ap.parse_args()
 
@@ -136,8 +139,11 @@ def main() -> None:
     if not case.is_dir():
         raise SystemExit("폴더가 아니다: %s" % case)
 
-    out = Path(args.out).resolve() if args.out else case.parent / (case.name + "_분석")
+    # 케이스 폴더 옆에 두지 않는다. 공유폴더는 분석이 끝나면 비우는 자리다.
+    out = Path(args.out).resolve() if args.out else Path.cwd() / "07_케이스" / case.name
     out.mkdir(parents=True, exist_ok=True)
+    if out.resolve() == case.resolve() or case.resolve() in out.resolve().parents:
+        raise SystemExit("결과 폴더가 케이스 폴더 안이다. --out 으로 밖을 지정할 것")
 
     files = sorted(p for p in case.rglob("*") if p.is_file())
     if not files:
