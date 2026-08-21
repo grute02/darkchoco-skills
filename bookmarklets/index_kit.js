@@ -13,6 +13,13 @@
 
   const T = e => (e ? (e.innerText || e.textContent || '') : '').replace(/ /g, ' ').replace(/\s+/g, ' ').trim();
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const GAP = 3.75;   /* 요청 간격 2.5~5초의 가운데. 시간 어림에 쓴다 */
+  const dur = s => {
+    s = Math.max(0, Math.round(s));
+    if (s >= 3600) return Math.floor(s / 3600) + '시간 ' + Math.round((s % 3600) / 60) + '분';
+    if (s >= 60) return Math.floor(s / 60) + '분 ' + (s % 60) + '초';
+    return s + '초';
+  };
   const CHAL = /cf[-_]chl|cf_chl_opt|Just a moment|Checking your browser|__cf_chl|Attention Required/i;
   const MONTH = { Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06',
                   Jul: '07', Aug: '08', Sep: '09', Oct: '10', Nov: '11', Dec: '12' };
@@ -105,7 +112,7 @@
 
   /* ── 걸어다니기. 디렉터리만 요청한다 ──────────── */
   let ABORT = false, BUSY = false;
-  let RESULT = [], STOPPED = '', WALKED = 0, UNOPENED = [];
+  let RESULT = [], STOPPED = '', WALKED = 0, UNOPENED = [], T0 = 0, TOOK = 0;
 
   const fetchDir = async url => {
     if (!url.endsWith('/')) throw new Error('디렉터리가 아닌 주소는 요청하지 않는다: ' + url);
@@ -119,7 +126,7 @@
   };
 
   const walk = async (maxDepth, maxReq) => {
-    RESULT = []; STOPPED = ''; WALKED = 0; UNOPENED = [];
+    RESULT = []; STOPPED = ''; WALKED = 0; UNOPENED = []; T0 = Date.now(); TOOK = 0;
     const seen = new Set([BASE]);
     const queue = [{ url: BASE, depth: 0 }];
     while (queue.length) {
@@ -149,8 +156,12 @@
         queue.push({ url: r.url, depth: cur.depth + 1 });
       });
       say('걸어다니는 중 · 요청 ' + WALKED + ' · 모은 것 ' + RESULT.length
-          + ' · 남은 폴더 ' + queue.length + (UNOPENED.length ? ' · 안 열어본 ' + UNOPENED.length : ''));
+          + ' · 남은 폴더 ' + queue.length
+          + ' · 지난 ' + dur((Date.now() - T0) / 1000)
+          + ' · 최소 ' + dur(queue.length * GAP) + ' 더'
+          + (UNOPENED.length ? ' · 안 열어본 ' + UNOPENED.length : ''));
     }
+    TOOK = (Date.now() - T0) / 1000;
     /* 멈춰서 큐에 남은 것도 안 열어본 것이다 */
     queue.forEach(q => UNOPENED.push({
       rel: decodeURIComponent(q.url.slice(BASE.length)),
@@ -171,6 +182,7 @@
       md: paths(),
       status: '폴더 ' + dirs + ' · 파일 ' + files + ' · 어림 ' + (bytes / 1048576).toFixed(1) + 'MB'
              + ' · 깊이 ' + deepest() + ' · 요청 ' + WALKED
+             + (TOOK ? ' · ' + dur(TOOK) + ' 걸림' : '')
              + (cut ? ' · 안 열어본 폴더 ' + cut + '. 아래 숫자는 일부다'
                     : ' · 다 봤다. 깊이가 전체 깊이다')
              + (STOPPED ? ' · ' + STOPPED : '')
@@ -196,6 +208,8 @@
     L.push('# 어림 합계 ' + bytes.toLocaleString() + ' 바이트');
     L.push('# 크기는 서버가 반올림한 값이다. 정확한 바이트가 아니다');
     L.push('# 본 깊이 ' + deepest());
+    if (TOOK) L.push('# 걸린 시간 ' + dur(TOOK) + ' · 요청 ' + WALKED + '회');
+    if (UNOPENED.length) L.push('# 남은 것을 다 보려면 최소 ' + dur(UNOPENED.length * GAP) + ' 더 든다');
     if (UNOPENED.length) {
       L.push('# 안 열어본 폴더 ' + UNOPENED.length + '. 위 숫자는 일부다');
       L.push('# 아래 주소에서 다시 눌러 이어서 걸어다닌다');
@@ -287,6 +301,9 @@
   window.__IK = box;
 
   const n = parse(document, BASE);
-  say(VER + ' · ' + LABEL + ' · 이 쪽에 ' + n.filter(r => r.isDir).length + '폴더 '
-      + n.filter(r => !r.isDir).length + '파일 · 파일은 요청하지 않는다');
+  const nd = n.filter(r => r.isDir).length;
+  say(VER + ' · ' + LABEL + ' · 이 쪽에 ' + nd + '폴더 '
+      + n.filter(r => !r.isDir).length + '파일'
+      + (nd ? ' · 깊이 1만 돌아도 최소 ' + dur(nd * GAP) : '')
+      + ' · 파일은 요청하지 않는다');
 })();
