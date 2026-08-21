@@ -105,7 +105,7 @@
 
   /* ── 걸어다니기. 디렉터리만 요청한다 ──────────── */
   let ABORT = false, BUSY = false;
-  let RESULT = [], STOPPED = '', WALKED = 0;
+  let RESULT = [], STOPPED = '', WALKED = 0, UNOPENED = [];
 
   const fetchDir = async url => {
     if (!url.endsWith('/')) throw new Error('디렉터리가 아닌 주소는 요청하지 않는다: ' + url);
@@ -119,7 +119,7 @@
   };
 
   const walk = async (maxDepth, maxReq) => {
-    RESULT = []; STOPPED = ''; WALKED = 0;
+    RESULT = []; STOPPED = ''; WALKED = 0; UNOPENED = [];
     const seen = new Set([BASE]);
     const queue = [{ url: BASE, depth: 0 }];
     while (queue.length) {
@@ -139,24 +139,41 @@
       const rows = parse(doc, cur.url);
       rows.forEach(r => {
         RESULT.push(r);
-        if (r.isDir && cur.depth + 1 <= maxDepth && !seen.has(r.url)) {
-          seen.add(r.url);
-          queue.push({ url: r.url, depth: cur.depth + 1 });
+        if (!r.isDir || seen.has(r.url)) return;
+        if (cur.depth + 1 > maxDepth) {
+          /* 깊이 상한이다. 있는 줄은 알지만 안을 못 봤다. 반드시 적는다 */
+          UNOPENED.push({ rel: r.rel, why: '깊이 상한 ' + maxDepth });
+          return;
         }
+        seen.add(r.url);
+        queue.push({ url: r.url, depth: cur.depth + 1 });
       });
-      say('걸어다니는 중 · 요청 ' + WALKED + ' · 모은 것 ' + RESULT.length + ' · 남은 폴더 ' + queue.length);
+      say('걸어다니는 중 · 요청 ' + WALKED + ' · 모은 것 ' + RESULT.length
+          + ' · 남은 폴더 ' + queue.length + (UNOPENED.length ? ' · 안 열어본 ' + UNOPENED.length : ''));
     }
+    /* 멈춰서 큐에 남은 것도 안 열어본 것이다 */
+    queue.forEach(q => UNOPENED.push({
+      rel: decodeURIComponent(q.url.slice(BASE.length)),
+      why: STOPPED || '멈춤'
+    }));
     return sum();
   };
+
+  const depthOf = rel => rel.replace(/\/+$/, '').split('/').filter(Boolean).length;
+  const deepest = () => RESULT.reduce((a, r) => Math.max(a, depthOf(r.rel)), 0);
 
   const sum = () => {
     const dirs = RESULT.filter(r => r.isDir).length;
     const files = RESULT.length - dirs;
     const bytes = RESULT.reduce((a, r) => a + (r.bytes || 0), 0);
+    const cut = UNOPENED.length;
     return {
       md: paths(),
       status: '폴더 ' + dirs + ' · 파일 ' + files + ' · 어림 ' + (bytes / 1048576).toFixed(1) + 'MB'
-             + ' · 요청 ' + WALKED + (STOPPED ? ' · ' + STOPPED : '')
+             + ' · 깊이 ' + deepest() + ' · 요청 ' + WALKED
+             + (cut ? ' · 안 열어본 폴더 ' + cut + '. 아래 숫자는 일부다'
+                    : ' · 다 봤다. 깊이가 전체 깊이다')
+             + (STOPPED ? ' · ' + STOPPED : '')
     };
   };
 
@@ -178,6 +195,14 @@
     L.push('');
     L.push('# 어림 합계 ' + bytes.toLocaleString() + ' 바이트');
     L.push('# 크기는 서버가 반올림한 값이다. 정확한 바이트가 아니다');
+    L.push('# 본 깊이 ' + deepest());
+    if (UNOPENED.length) {
+      L.push('# 안 열어본 폴더 ' + UNOPENED.length + '. 위 숫자는 일부다');
+      L.push('# 아래 주소에서 다시 눌러 이어서 걸어다닌다');
+      UNOPENED.forEach(u => L.push('#   ' + LABEL + '/' + u.rel + '   (' + u.why + ')'));
+    } else {
+      L.push('# 안 열어본 폴더 없음. 전체를 다 봤고 위 깊이가 전체 깊이다');
+    }
     L.push('# 수집 ' + new Date().toISOString().slice(0, 16).replace('T', ' ') + ' · ' + BASE);
     if (STOPPED) L.push('# ' + STOPPED);
     return L.join('\n');
@@ -217,7 +242,7 @@
     l.__i = i;
     return l;
   };
-  const dWrap = inp('깊이', '4', 2);
+  const dWrap = inp('깊이', '8', 2);
   const rWrap = inp('요청상한', '200', 4);
 
   const bHere = mk('이 쪽만', async () => {
