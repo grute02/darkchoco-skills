@@ -210,6 +210,7 @@ mysqldump 는 한 줄이 수 MB 다. 앞부분만 읽으면 표 구조도 규모
     tools/tree_rules.json   트리 규칙
     tools/db_tree.py        SQL 덤프의 표 구조 분석
     tools/sample_stats.py   샘플 값 분포와 합성 의심
+    tools/inspect.py        케이스 폴더 하나를 통째로. 종류 판정 후 위 도구에 태운다
 
 경로가 안 잡히면 스킬 폴더를 기준으로 부른다.
 
