@@ -173,31 +173,33 @@
   const depthOf = rel => rel.replace(/\/+$/, '').split('/').filter(Boolean).length;
   const deepest = () => RESULT.reduce((a, r) => Math.max(a, depthOf(r.rel)), 0);
 
-  const sum = () => {
+  const brief = () => {
     const dirs = RESULT.filter(r => r.isDir).length;
-    const files = RESULT.length - dirs;
     const bytes = RESULT.reduce((a, r) => a + (r.bytes || 0), 0);
-    const cut = UNOPENED.length;
-    return {
-      md: paths(),
-      status: '폴더 ' + dirs + ' · 파일 ' + files + ' · 어림 ' + (bytes / 1048576).toFixed(1) + 'MB'
-             + ' · 깊이 ' + deepest() + ' · 요청 ' + WALKED
-             + (TOOK ? ' · ' + dur(TOOK) + ' 걸림' : '')
-             + (cut ? ' · 안 열어본 폴더 ' + cut + '. 아래 숫자는 일부다'
-                    : ' · 다 봤다. 깊이가 전체 깊이다')
-             + (STOPPED ? ' · ' + STOPPED : '')
-    };
+    return '폴더 ' + dirs + ' · 파일 ' + (RESULT.length - dirs)
+         + ' · 어림 ' + (bytes / 1048576).toFixed(1) + 'MB'
+         + ' · 깊이 ' + deepest() + ' · 요청 ' + WALKED
+         + (TOOK ? ' · ' + dur(TOOK) + ' 걸림' : '')
+         + (UNOPENED.length ? ' · 안 열어본 폴더 ' + UNOPENED.length + '. 이 숫자는 일부다'
+                            : ' · 다 봤다. 깊이가 전체 깊이다')
+         + (STOPPED ? ' · ' + STOPPED : '');
   };
+
+  const sum = () => ({ md: paths(), status: brief() });
 
   /* ── 내보내기 둘. 네트워크를 안 쓴다 ──────────── */
   const paths = () => {
-    if (!RESULT.length) return '모은 것이 없다. 먼저 걸어다니기를 누를 것';
-    const L = RESULT.map(r => LABEL + '/' + r.rel);
-    L.sort();
-    return L.join('\n');
+    if (!RESULT.length) return '모은 것이 없다. 먼저 초동분석이나 전체 수집을 누른다';
+    /* 맨 앞 # 줄은 tree_scan 이 건너뛴다. 사람이 보라고 붙인다 */
+    const L = ['# ' + brief(),
+               '# 수집 ' + new Date().toISOString().slice(0, 16).replace('T', ' ') + ' · ' + BASE];
+    UNOPENED.slice(0, 40).forEach(u => L.push('# 안 열어봄  ' + LABEL + '/' + u.rel + '   (' + u.why + ')'));
+    if (UNOPENED.length > 40) L.push('# 안 열어본 폴더 ' + (UNOPENED.length - 40) + '개 더 있다. 전체는 크기·날짜 표에');
+    L.push('');
+    return L.concat(RESULT.map(r => LABEL + '/' + r.rel).sort()).join('\n');
   };
   const tsv = () => {
-    if (!RESULT.length) return '모은 것이 없다. 먼저 걸어다니기를 누를 것';
+    if (!RESULT.length) return '모은 것이 없다. 먼저 초동분석이나 전체 수집을 누른다';
     const L = ['경로\t종류\t크기표기\t바이트어림\t날짜'];
     RESULT.slice().sort((a, b) => a.rel.localeCompare(b.rel)).forEach(r => {
       L.push([LABEL + '/' + r.rel, r.isDir ? '폴더' : '파일',
@@ -259,15 +261,22 @@
   const dWrap = inp('깊이', '8', 2);
   const rWrap = inp('요청상한', '200', 4);
 
-  const bHere = mk('이 쪽만', async () => {
-    RESULT = parse(document, BASE); STOPPED = ''; WALKED = 0;
+  const runWalk = () => walk(Math.max(1, parseInt(dWrap.__i.value, 10) || 8),
+                             Math.max(1, parseInt(rWrap.__i.value, 10) || 200));
+
+  /* 초동분석. 요청 수만 묶는다. 너비 우선이라 위쪽 층이 통째로 남는다 */
+  const bQuick = mk('초동분석  3분', async () => {
+    dWrap.__i.value = '8';
+    rWrap.__i.value = '50';
+    return runWalk();
+  }, true);
+  const bWalk = mk('전체 수집', async () => runWalk(), false);
+  const bHere = mk('이 폴더만', async () => {
+    RESULT = parse(document, BASE); STOPPED = ''; WALKED = 0; UNOPENED = []; TOOK = 0;
     return sum();
   }, false);
-  const bWalk = mk('걸어다니기', async () =>
-    walk(Math.max(1, parseInt(dWrap.__i.value, 10) || 4),
-         Math.max(1, parseInt(rWrap.__i.value, 10) || 200)), true);
   const bPaths = mk('경로 목록', async () => ({ md: paths(), status: 'tree_scan 에 그대로 넣는다' }), false);
-  const bTsv = mk('크기·날짜 TSV', async () => ({ md: tsv(), status: 'TSV ' + RESULT.length + '줄' }), false);
+  const bTsv = mk('크기·날짜 표', async () => ({ md: tsv(), status: '표 ' + RESULT.length + '줄' }), false);
 
   const stopB = document.createElement('button');
   stopB.textContent = '중단';
@@ -295,7 +304,7 @@
     miniB.textContent = MINI ? '펼치기' : '최소화';
   };
 
-  bar.append(bHere, bWalk, bPaths, bTsv, dWrap, rWrap, st, stopB, miniB, closeB);
+  bar.append(bQuick, bWalk, bHere, bPaths, bTsv, dWrap, rWrap, st, stopB, miniB, closeB);
   box.append(bar, ta);
   document.body.appendChild(box);
   window.__IK = box;
@@ -305,5 +314,5 @@
   say(VER + ' · ' + LABEL + ' · 이 쪽에 ' + nd + '폴더 '
       + n.filter(r => !r.isDir).length + '파일'
       + (nd ? ' · 깊이 1만 돌아도 최소 ' + dur(nd * GAP) : '')
-      + ' · 파일은 요청하지 않는다');
+      + ' · 처음이면 초동분석부터');
 })();

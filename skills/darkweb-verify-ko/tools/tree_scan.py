@@ -22,7 +22,7 @@ from pathlib import Path
 BRANCH = re.compile(r"^[\s│├└─|`+\-]*")
 SIZE_LINE = re.compile(r"^\s*(\d+)\s+[\d-]{8,10}\s+[\d:]{5,8}\s+(.+)$")
 NOISE = re.compile(
-    r"^\s*(Archive:|Length\s+Date|-{3,}|$)"       # 머리말과 구분선
+    r"^\s*(Archive:|Length\s+Date|-{3,}|#|$)"     # 머리말, 구분선, 주석
     r"|^[\s\d,]*\d+\s+files?\s*$"                  # unzip -l 꼬리 합계
     r"|^[\s\d,]*\d+\s+file\(s\)"                   # dir 명령 꼬리 합계
 )

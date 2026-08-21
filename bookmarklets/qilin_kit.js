@@ -333,8 +333,8 @@
   closeB.onclick = () => box.remove();
 
   const isDetail = /\/site\/blog\?uuid=|\/c\/[^\/]+\/\d+/.test(location.href);
-  const bList = mk('이 쪽 목록', listHere, !isDetail);
-  const bAll = mk('여러 쪽 모으기', listAll, false);
+  const bList = mk('이 페이지만', listHere, !isDetail);
+  const bAll = mk('전체 수집', listAll, false);
   const bDetail = mk('이 건 상세', async () => detail(), isDetail);
   const bTree = mk('파일 목록 뽑기', async () => tree(), false);
 
