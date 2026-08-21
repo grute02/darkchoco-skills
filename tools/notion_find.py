@@ -90,10 +90,8 @@ def days_between(a: str, b: str) -> int | None:
     return abs((fa - fb).days)
 
 
-SAME_DAYS = 3
-
-
 TLD = {"www", "co", "kr", "com", "net", "org", "io", "biz", "info"}
+FORUM_TLD = TLD | {"onion", "st", "su", "ru", "is", "to", "cc", "sx", "pw", "me"}
 
 
 def org_keys(org: str) -> set[str]:
@@ -123,7 +121,7 @@ def in_url(org: str, url: str) -> bool:
 
 
 def same_handle(a: str, b: str) -> bool | None:
-    """게시자가 같은가. 한쪽이라도 비면 None."""
+    """행위자가 같은가. 한쪽이라도 비면 None."""
     x = re.sub(r"[^0-9a-z가-힣]+", "", (a or "").lower())
     y = re.sub(r"[^0-9a-z가-힣]+", "", (b or "").lower())
     if not x or not y:
@@ -131,11 +129,70 @@ def same_handle(a: str, b: str) -> bool | None:
     return x == y
 
 
+def forum_keys(s: str) -> set[str]:
+    """포럼을 가리키는 조각들. 이름이든 주소든 받는다.
+
+    onion 주소의 앞 해시는 길어서 버린다. 같은 포럼도 미러마다 해시가 달라
+    비교에 못 쓴다. 그럴 때는 게시 플랫폼 칸이나 --forum 을 봐야 한다.
+    """
+    keys: set[str] = set()
+    low = (s or "").strip().lower()
+    if not low:
+        return keys
+    for host in re.findall(r"[a-z0-9][a-z0-9\-]*(?:\.[a-z0-9\-]+)+", low):
+        for p in host.split("."):
+            if p not in FORUM_TLD and 3 <= len(p) <= 24:
+                keys.add(p)
+    name = re.sub(r"[^0-9a-z가-힣]+", "", low)
+    if 3 <= len(name) <= 24:
+        keys.add(name)
+    return keys
+
+
+def same_forum(a: str, b: str) -> bool | None:
+    """포럼이 같은가. 한쪽이라도 못 읽으면 None."""
+    x, y = forum_keys(a), forum_keys(b)
+    if not x or not y:
+        return None
+    return bool(x & y)
+
+
+def size_keys(s: str) -> set[str]:
+    """주장 규모에서 자릿수 있는 숫자만 뽑는다. 구분기호는 뗀다."""
+    out: set[str] = set()
+    for m in re.findall(r"\d[\d,\.]{2,}\d", s or ""):
+        n = re.sub(r"[,\.]", "", m)
+        if len(n) >= 4:
+            out.add(n)
+    return out
+
+
+def size_note(a: str, b: str) -> str:
+    """규모가 같아 보이는지. 분류를 가르지 않고 사람이 보라고 적기만 한다."""
+    x, y = size_keys(a), size_keys(b)
+    if not x or not y:
+        return ""
+    return ". 주장 규모 같음" if x & y else ". 주장 규모 표기가 다름"
+
+
 def classify(row_url: str, row_org: str, row_date: str, row_handle: str,
-             new_url: str, new_org: str, new_date: str, new_handle: str) -> tuple[str, str]:
-    """이 줄이 새 건과 어떤 사이인지. (분류, 다음에 할 일)"""
+             row_forum: str, row_size: str,
+             new_url: str, new_org: str, new_date: str, new_handle: str,
+             new_forum: str, new_size: str) -> tuple[str, str]:
+    """이 줄이 새 건과 어떤 사이인지. (분류, 다음에 할 일)
+
+    축은 셋이다. 케이스가 같은가, 행위자가 같은가, 포럼이 같은가.
+
+        아예 동일 케이스            케이스·행위자·포럼이 모두 같다
+        재게시                    케이스·행위자가 같고 포럼만 다르다
+        일부 조건이 다른 같은 케이스   케이스는 같고 행위자가 다르다
+
+    케이스가 같은지는 대상 조직으로 후보만 고른다. 규모로는 못 가른다.
+    AT&T 건에서 49,102,176 과 73,481,539 가 같은 데이터였다. 앞은 고유
+    이메일 수고 뒤는 행 수다. 규모는 사람이 보라고 옆에 적어만 둔다.
+    """
     if new_url and row_url and norm_url(row_url) == norm_url(new_url):
-        return "완전 동일 건", "새로 채번하지 않는다. 이 줄에 이어 붙인다"
+        return "아예 동일 케이스", "원문 URL 이 같다. 같은 글이다. 새로 채번하지 않고 이 줄에 이어 붙인다"
     if not new_org and not new_url:
         return "확인 못 함", "새 건의 대상 조직을 --org 로 줘야 가른다"
 
@@ -147,23 +204,34 @@ def classify(row_url: str, row_org: str, row_date: str, row_handle: str,
             return "같은 대상 의심", "이름은 다른데 주소 안에 상대 이름이 있다. 사람이 확인할 것"
         return "다른 건", "대상이 다르다. 대조 재료로만 본다"
 
+    # 여기부터 같은 케이스 후보다
     d = days_between(row_date, new_date)
-    gap = f"게시 시각 차이 {d}일" if d is not None else "날짜를 못 읽음"
+    gap = f"게시 시각 차이 {d}일" if d is not None else "게시 시각을 못 읽음"
+    tail = f". {gap}{size_note(row_size, new_size)}"
+
     h = same_handle(row_handle, new_handle)
+    f = same_forum(row_forum, new_forum)
 
     if h is False:
-        return ("다른 게시자 재유포 후보",
-                f"대상은 같은데 게시자가 다르다 ({row_handle or '?'} vs {new_handle or '?'}). "
-                f"{gap}. 신규성 판정에서 재유포를 먼저 본다")
-    if d is None:
-        return "같은 대상", "날짜를 못 읽었다. 사람이 재게시인지 가른다"
+        who = f"{row_handle or '?'} vs {new_handle or '?'}"
+        also = ""
+        if f is False:
+            also = f", 포럼도 다르다 ({row_forum or '?'} vs {new_forum or '?'})"
+        elif f is True:
+            also = f", 포럼은 같다 ({row_forum})"
+        return ("일부 조건이 다른 같은 케이스",
+                f"행위자가 다르다 ({who}){also}. 신규성 판정에서 재유포를 먼저 본다{tail}")
     if h is None:
-        tail = ". 게시자는 확인 못 함. --handle 을 주면 재유포를 가른다"
-    else:
-        tail = ". 같은 게시자다"
-    if d <= SAME_DAYS:
-        return "조건만 다른 같은 건", f"{gap}. 같은 배포로 본다{tail}"
-    return "재게시 후보", f"{gap}. 재유포인지 별건인지 가른다{tail}"
+        return "확인 못 함", f"행위자를 못 읽었다. --handle 을 주면 가른다{tail}"
+
+    # 행위자가 같다
+    if f is False:
+        return ("재게시",
+                f"같은 행위자가 다른 포럼에 올렸다 ({row_forum or '?'} 에서 {new_forum or '?'} 로){tail}")
+    if f is True:
+        return ("아예 동일 케이스",
+                f"행위자와 포럼이 같다 ({row_handle}, {row_forum}){tail}")
+    return "확인 못 함", f"포럼을 못 읽었다. --forum 을 주면 재게시인지 가른다{tail}"
 
 
 def main() -> None:
@@ -174,7 +242,9 @@ def main() -> None:
     ap.add_argument("--url", default="", help="새 건의 원문 URL. 주면 같은 글인지 가른다")
     ap.add_argument("--org", default="", help="새 건의 대상 조직")
     ap.add_argument("--date", default="", help="새 건의 게시 시각 YYYY-MM-DD")
-    ap.add_argument("--handle", default="", help="새 건의 게시자 핸들. 재유포를 가른다")
+    ap.add_argument("--handle", default="", help="새 건의 행위자 핸들. 재게시를 가른다")
+    ap.add_argument("--forum", default="", help="새 건의 포럼. 재게시와 아예 동일을 가른다")
+    ap.add_argument("--size", default="", help="새 건의 주장 규모. 사람이 보라고 옆에 적는다")
     args = ap.parse_args()
 
     ds_id, dbname = find_db(args.db)
@@ -224,23 +294,24 @@ def main() -> None:
             if k in props:
                 s = as_text(props[k])
                 if s:
-                    # 원문 URL 은 자르지 않는다. 완전 동일 건 판별에 통째로 쓴다
+                    # 원문 URL 은 자르지 않는다. 같은 글 판별에 통째로 쓴다
                     print(f"  {k}: {s if k == '원문 URL' else s[:90]}")
-        if args.url or args.org or args.date or args.handle:
+        if args.url or args.org or args.date or args.handle or args.forum:
             kind, todo = classify(
                 as_text(props.get("원문 URL", {})), as_text(props.get("대상 조직", {})),
                 as_text(props.get("게시 시각", {})) or as_text(props.get("수집일", {})),
                 as_text(props.get("게시자 핸들", {})),
-                args.url, args.org, args.date, args.handle)
+                as_text(props.get("게시 플랫폼", {})), as_text(props.get("주장 규모", {})),
+                args.url, args.org, args.date, args.handle, args.forum, args.size)
             print(f"  >> {kind} — {todo}")
         print()
 
-    if args.url or args.org or args.date or args.handle:
+    if args.url or args.org or args.date or args.handle or args.forum:
         print("분류는 참고다. 사람이 확인하고 정한다.")
-        print("완전 동일 건이 하나라도 있으면 새 조사를 시작하지 않는다.")
+        print("아예 동일 케이스가 하나라도 있으면 새 조사를 시작하지 않는다.")
     else:
-        print("원문 URL·대상 조직·게시 시각을 주면 분류까지 한다.")
-        print('  --url "<원문 URL>" --org "<대상 조직>" --date YYYY-MM-DD --handle "<게시자 핸들>"')
+        print("대상 조직·행위자·포럼을 주면 분류까지 한다.")
+        print('  --org "<대상 조직>" --handle "<행위자>" --forum "<포럼>" --url "<원문 URL>" --date YYYY-MM-DD')
     print("이미 있는 줄이면 새로 채번하지 않는다. 그 줄에 이어 붙인다.")
 
 

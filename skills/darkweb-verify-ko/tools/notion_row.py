@@ -11,6 +11,9 @@
 
 입력 파일은 ⑨ 출력 그대로다. 한 줄에 `칸 이름: 값` 형식.
 빈 값과 자동 생성 칸(생성일, 최근 1주 등)은 알아서 건너뛴다.
+
+relation 칸은 사건 ID 로 준다. `같은 사건: LEAK-8` 처럼 쓰면 그 줄을 찾아 잇는다.
+여럿이면 쉼표로 나눈다. 못 찾으면 잇지 않고 확인할 것에 적는다.
 """
 from __future__ import annotations
 
@@ -52,6 +55,61 @@ def parse_output(text: str) -> dict[str, str]:
         if key and val:
             out[key] = val
     return out
+
+
+_ROWS: dict[str, list[dict]] = {}
+
+
+def _target_rows(ds_id: str) -> list[dict]:
+    """상대 DB 의 줄을 한 번만 받아 둔다."""
+    if ds_id not in _ROWS:
+        out, cursor = [], None
+        while True:
+            body: dict = {"page_size": 100}
+            if cursor:
+                body["start_cursor"] = cursor
+            d = _call(f"/data_sources/{ds_id}/query", "POST", body)
+            out += d["results"]
+            if not d.get("has_more"):
+                break
+            cursor = d["next_cursor"]
+        _ROWS[ds_id] = out
+    return _ROWS[ds_id]
+
+
+def _row_labels(row: dict) -> set[str]:
+    """이 줄을 부를 수 있는 이름들. 사건 ID 와 제목."""
+    out: set[str] = set()
+    for v in row.get("properties", {}).values():
+        ty = v.get("type")
+        if ty == "unique_id":
+            u = v.get("unique_id") or {}
+            pre, num = (u.get("prefix") or ""), u.get("number")
+            if num is not None:
+                out.add(f"{pre}-{num}".lower())
+                out.add(f"{pre}{num}".lower())
+                out.add(str(num))
+        elif ty == "title":
+            s = "".join(x.get("plain_text", "") for x in v.get("title", []))
+            if s.strip():
+                out.add(s.strip().lower())
+    return out
+
+
+def resolve_relation(ds_id: str, raw: str) -> tuple[list[str], list[str]]:
+    """사건 ID 나 제목을 page id 로 바꾼다. (찾은 것, 못 찾은 것)"""
+    want = [x.strip() for x in re.split(r"[,·/]", raw) if x.strip()]
+    found, missing = [], []
+    rows = _target_rows(ds_id)
+    for w in want:
+        key = w.lower()
+        hit = next((r for r in rows if key in _row_labels(r)), None)
+        if hit:
+            if hit["id"] not in found:
+                found.append(hit["id"])
+        else:
+            missing.append(w)
+    return found, missing
 
 
 def build(props: dict, values: dict[str, str]) -> tuple[dict, list[str], list[str]]:
@@ -107,6 +165,18 @@ def build(props: dict, values: dict[str, str]) -> tuple[dict, list[str], list[st
             body[key] = {"multi_select": [{"name": x} for x in ok]}
         elif t == "url":
             body[key] = {"url": raw}
+        elif t == "relation":
+            ds = props[key].get("relation", {}).get("data_source_id", "")
+            if not ds:
+                skipped.append(f"{key}  상대 DB를 못 찾음")
+                continue
+            ids, missing = resolve_relation(ds, raw)
+            if missing:
+                warn.append(f"{key}  못 찾은 줄: {', '.join(missing)}. 사건 ID 나 제목 그대로 줄 것")
+            if not ids:
+                skipped.append(f"{key}  이을 줄을 못 찾아 건너뜀")
+                continue
+            body[key] = {"relation": [{"id": i} for i in ids]}
         else:
             skipped.append(f"{key}  다루지 않는 칸 종류 {t}")
     return body, skipped, warn
@@ -130,6 +200,8 @@ def show(dbname: str, props: dict, body: dict, skipped: list[str],
             s = v["date"]["start"]
         elif t == "checkbox":
             s = "체크" if v["checkbox"] else "해제"
+        elif t == "relation":
+            s = f"{len(v['relation'])}줄과 이음"
         else:
             s = str(v.get(t))
         s = s.replace("\n", " ")
