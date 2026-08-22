@@ -213,6 +213,23 @@ mysqldump 는 한 줄이 수 MB 다. 앞부분만 읽으면 표 구조도 규모
     tools/db_tree.py        SQL 덤프의 표 구조 분석
     tools/sample_stats.py   샘플 값 분포와 합성 의심
     tools/inspect.py        케이스 폴더 하나를 통째로. 종류 판정 후 위 도구에 태운다
+    tools/verify_cfg.py     ⑥ 출력 방식 설정. md 로 낼지 화면에 낼지
+
+### ⑥ 은 로그를 md 로 내고 화면에는 요약만 낸다
+
+기본값이 그렇다. 로그를 줄이는 것이 아니라 둘 곳을 나눈 것이다.
+
+| | 어디로 |
+|---|---|
+| ⑥ 1~9번 로그 | `07_케이스/<케이스>/검증_<케이스>_<날짜>.md` |
+| ⑥ 10번 요약 네 절 | 화면. 로그 다음에 |
+
+화면에는 요약과 md 경로만 나온다. CLI 든 데스크톱이든 채팅이든 같다.
+사용자가 전체를 보자고 하면 그때 로그도 낸다.
+
+    python tools/verify_cfg.py            지금 설정
+    python tools/verify_cfg.py 화면=전체   항상 다 내게
+    python tools/verify_cfg.py --기본값
 
 경로가 안 잡히면 스킬 폴더를 기준으로 부른다.
 

@@ -3,3 +3,6 @@
 *.key
 *.pem
 __pycache__/
+
+# ⑥ 출력 설정. 사람마다 다르다
+verify_config.json
