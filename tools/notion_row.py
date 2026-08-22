@@ -87,21 +87,44 @@ def body_blocks(items: list[tuple[str, str, str]]) -> list[dict]:
 
 
 def parse_output(text: str) -> dict[str, str]:
-    """⑨ 출력에서 '칸: 값' 을 뽑는다."""
+    """⑨ 출력에서 '칸: 값' 을 뽑는다.
+
+    **4칸 이상 들여쓴 줄은 앞 칸의 값에 이어 붙인다.**
+    검증 요약과 한계는 한 줄에 안 들어간다. 위험도 절만 다섯 줄이다.
+    들여쓴 줄 안의 콜론을 새 칸으로 읽지 않는다.
+    """
     out: dict[str, str] = {}
-    for line in text.split("\n"):
+    cur = ""
+    body = text.split(BODY_MARK, 1)[0]      # 본문 절은 여기서 안 읽는다
+    for line in body.split("\n"):
         line = line.rstrip()
-        if not line.strip() or line.lstrip().startswith(("#", "-", "*", "[", "■", "```")):
+        if not line.strip():
+            if cur:
+                out[cur] += "\n"
             continue
-        m = re.match(r"^\s{0,4}([^:]{1,30}?)\s*:\s*(.*)$", line)
+        if line.lstrip().startswith(("#", "*", "[", "■", "```", "|")):
+            cur = ""
+            continue
+        # 4칸 이상 들여쓴 줄은 앞 값의 이어짐이다
+        if cur and re.match(r"^ {4,}\S", line):
+            out[cur] += "\n" + line.strip()
+            continue
+        if line.lstrip().startswith("-"):
+            cur = ""
+            continue
+        m = re.match(r"^ {0,3}([^:]{1,30}?)\s*:\s*(.*)$", line)
         if not m:
+            cur = ""
             continue
         key, val = m.group(1).strip(), m.group(2).strip()
         # 주석성 꼬리표 제거
         val = re.sub(r"\s{2,}\(.*\)$", "", val)
-        if key and val:
-            out[key] = val
-    return out
+        if not key:
+            cur = ""
+            continue
+        out[key] = val
+        cur = key
+    return {k: v.strip() for k, v in out.items() if v.strip()}
 
 
 _ROWS: dict[str, list[dict]] = {}
@@ -204,7 +227,17 @@ def build(props: dict, values: dict[str, str]) -> tuple[dict, list[str], list[st
             body[key] = {"select": {"name": raw}}
         elif t == "multi_select":
             opts = [o["name"] for o in props[key]["multi_select"]["options"]]
-            items = [x.strip() for x in re.split(r"[,·/]", raw) if x.strip()]
+            # 선택지 이름 안에도 · 가 있다 (2차 기사·리스트업).
+            # 쉼표와 빗금으로 먼저 자르고, 안 맞는 조각만 · 로 더 자른다.
+            items = []
+            for chunk in re.split(r"[,/]", raw):
+                chunk = chunk.strip()
+                if not chunk:
+                    continue
+                if chunk in opts or "·" not in chunk:
+                    items.append(chunk)
+                else:
+                    items += [x.strip() for x in chunk.split("·") if x.strip()]
             bad = [x for x in items if x not in opts]
             if bad:
                 warn.append(f"{key}  없는 선택지 {', '.join(bad)}. 있는 것: {', '.join(opts)}")
