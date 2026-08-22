@@ -113,12 +113,39 @@ def grade_of(table: str, cols: list[str]) -> tuple[str, str]:
     return "미분류", "개인정보로 보이는 칸이 없다"
 
 
-def scan(path: Path) -> tuple[OrderedDict, Counter, int]:
+def count_tuples(tail: str) -> tuple[int, str]:
+    """INSERT 의 VALUES 뒤를 받아 튜플 수와 센 방식을 돌려준다. 값은 읽지 않는다.
+
+    여는 괄호로 줄이 시작하면 거기서 튜플이 하나 시작하고,
+    `),(` 로 이어 붙은 수만큼 그 줄에 튜플이 더 있다.
+    이 한 식으로 아래 세 형식을 다 센다.
+
+        줄 단위 튜플    phpMyAdmin 내보내기. 튜플이 한 줄에 하나씩 온다
+        확장 INSERT     mysqldump 기본. 한 줄에 튜플이 이어 붙는다
+        문장당 한 튜플   INSERT 문 하나에 튜플 하나
+
+    값 안에 든 괄호는 줄 첫 글자가 아니라서 세지 않는다.
+    값 안에 진짜 줄바꿈이 있으면 더 세므로 어림값이다.
+    """
+    joined = tail.count("),(") + tail.count("), (")
+    heads = sum(1 for ln in tail.splitlines() if ln.lstrip().startswith("("))
+    if heads > 1:
+        how = "줄 단위 튜플"
+    elif joined:
+        how = "확장 INSERT"
+    else:
+        how = "문장당 한 튜플"
+    return heads + joined, how
+
+
+def scan(path: Path) -> tuple[OrderedDict, Counter, int, Counter]:
     """표별 칸 목록과 INSERT 튜플 수를 센다. 값은 읽지 않는다."""
     tables: OrderedDict[str, list[str]] = OrderedDict()
     rows: Counter = Counter()
+    methods: Counter = Counter()
     size = path.stat().st_size
     buf = ""
+    pending = ""
     with path.open("r", encoding="utf-8", errors="replace") as f:
         for line in f:
             buf += line
@@ -145,15 +172,26 @@ def scan(path: Path) -> tuple[OrderedDict, Counter, int]:
                         cols.append(m2.group(1))
                 if cols:
                     tables.setdefault(name, cols)
-            for m in INSERT.finditer(buf):
+            hits = list(INSERT.finditer(buf))
+            if pending:
+                # 읽기 버퍼는 세미콜론이 든 줄마다 비워진다. 값 안에 세미콜론이 있으면
+                # 한 INSERT 의 튜플이 여러 버퍼로 갈린다. 첫 INSERT 앞에 남은 줄은
+                # 앞 버퍼에서 이어진 것이다. 기억하지 않으면 통째로 버려진다.
+                head = buf[:hits[0].start()] if hits else buf
+                rows[pending] += count_tuples(head)[0]
+            for i, m in enumerate(hits):
                 name = m.group(1)
                 if m.group(2) and name not in tables:
                     tables[name] = [c.strip().strip('`"[] ') for c in m.group(2).split(",")]
                 tables.setdefault(name, [])
-                tail = buf[m.end():]
-                rows[name] += tail.count("),(") + tail.count("), (") + (1 if "(" in tail else 0)
+                stop = hits[i + 1].start() if i + 1 < len(hits) else len(buf)
+                n, how = count_tuples(buf[m.end():stop])
+                rows[name] += n
+                methods[how] += 1
+            if hits:
+                pending = hits[-1].group(1)
             buf = ""
-    return tables, rows, size
+    return tables, rows, size, methods
 
 
 def main() -> None:
@@ -165,7 +203,7 @@ def main() -> None:
     path = Path(args.file)
     if not path.exists():
         raise SystemExit(f"없는 파일: {path}")
-    tables, rows, size = scan(path)
+    tables, rows, size, methods = scan(path)
     if not tables:
         raise SystemExit("표를 못 찾았다. SQL 덤프가 맞는지 확인할 것")
 
@@ -174,6 +212,8 @@ def main() -> None:
     L.append("")
     L.append(f"- 표 {len(tables)}개 · 파일 {size:,} 바이트")
     L.append(f"- INSERT 로 센 행 합계 {sum(rows.values()):,} (구분자 기준. 어림값이다)")
+    if methods:
+        L.append("- 집계 방식 " + ", ".join(f"{k} {v}건" for k, v in methods.most_common()))
     L.append("")
     L.append("**칸 이름과 건수만 읽었다. 값은 하나도 없다.**")
     L.append("")
