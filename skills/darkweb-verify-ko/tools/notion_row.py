@@ -39,6 +39,52 @@ def find_db(name: str) -> tuple[str, str]:
     return hits[0]["id"], title_of(hits[0])
 
 
+# 페이지 본문으로 갈 항목. 칸이 아니라 블록이다.
+BODY_MARK = "--- 아래는 페이지 본문에 붙인다. 칸이 아니다 ---"
+BODY_KEYS = [("캡처", "paragraph"), ("연락처", "paragraph"),
+             ("참고사항", "bulleted_list_item")]
+
+# 이 칸이 비면 미리보기에서 알린다. 사람만 아는 값이라 물어봐야 채워진다.
+ASK_IF_EMPTY = {"수집": ["원문 URL", "게시 플랫폼"]}
+
+
+def parse_body(text: str) -> list[tuple[str, str, str]]:
+    """본문 표시줄 뒤에서 (제목, 블록종류, 내용) 을 순서대로 뽑는다.
+
+    parse_output 은 같은 칸 이름이 여러 줄이면 마지막만 남긴다.
+    참고사항은 여러 줄이 정상이라 따로 읽는다.
+    """
+    if BODY_MARK not in text:
+        return []
+    tail = text.split(BODY_MARK, 1)[1]
+    out: list[tuple[str, str, str]] = []
+    for name, kind in BODY_KEYS:
+        for line in tail.split("\n"):
+            line = line.strip()
+            if not line.startswith(name + ":"):
+                continue
+            val = line.split(":", 1)[1].strip()
+            if val:
+                out.append((name, kind, val))
+    return out
+
+
+def body_blocks(items: list[tuple[str, str, str]]) -> list[dict]:
+    """본문 항목을 노션 블록으로 바꾼다. 제목마다 heading_3 을 앞에 둔다."""
+    def rt(s: str) -> list[dict]:
+        return [{"type": "text", "text": {"content": s[:2000]}}]
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    for name, kind, val in items:
+        if name not in seen:
+            seen.add(name)
+            out.append({"object": "block", "type": "heading_3",
+                        "heading_3": {"rich_text": rt(name)}})
+        out.append({"object": "block", "type": kind, kind: {"rich_text": rt(val)}})
+    return out
+
+
 def parse_output(text: str) -> dict[str, str]:
     """⑨ 출력에서 '칸: 값' 을 뽑는다."""
     out: dict[str, str] = {}
@@ -118,8 +164,11 @@ def build(props: dict, values: dict[str, str]) -> tuple[dict, list[str], list[st
     skipped: list[str] = []
     warn: list[str] = []
 
+    known_body = {n for n, _ in BODY_KEYS}
     for key, raw in values.items():
         if key not in props:
+            if key in known_body:
+                continue          # 본문으로 간다. 따로 보고한다
             skipped.append(f"{key}  DB에 없는 칸")
             continue
         t = props[key]["type"]
@@ -183,9 +232,12 @@ def build(props: dict, values: dict[str, str]) -> tuple[dict, list[str], list[st
 
 
 def show(dbname: str, props: dict, body: dict, skipped: list[str],
-         warn: list[str], excluded: list[str]) -> None:
+         warn: list[str], excluded: list[str],
+         blocks: list[dict] | None = None) -> None:
+    blocks = blocks or []
     print(f"\n대상 DB   {dbname}")
-    print(f"넣을 칸   {len(body)}개\n")
+    print(f"넣을 칸   {len(body)}개")
+    print(f"본문 블록  {len(blocks)}개\n")
     print("| 칸 | 종류 | 값 |")
     print("|---|---|---|")
     for k, v in body.items():
@@ -215,6 +267,13 @@ def show(dbname: str, props: dict, body: dict, skipped: list[str],
         print("\n[못 넣은 칸]")
         for s in skipped:
             print(f"  {s}")
+    if blocks:
+        print("\n[페이지 본문]")
+        for b in blocks:
+            t = b["type"]
+            s = b[t]["rich_text"][0]["text"]["content"].replace("\n", " ")
+            head = "  " if t == "heading_3" else "    - "
+            print(f"{head}{s[:76]}{'...' if len(s) > 76 else ''}")
     if warn:
         print("\n[확인할 것]")
         for w in warn:
@@ -234,7 +293,9 @@ def main() -> None:
     ds_id, dbname = find_db(args.db)
     props = _call(f"/data_sources/{ds_id}")["properties"]
 
-    values = parse_output(Path(args.infile).read_text(encoding="utf-8"))
+    text = Path(args.infile).read_text(encoding="utf-8")
+    values = parse_output(text)
+    blocks = body_blocks(parse_body(text))
 
     excluded = [x.strip() for x in args.exclude.split(",") if x.strip()]
     for k in excluded:
@@ -249,7 +310,15 @@ def main() -> None:
     if not body:
         raise SystemExit("넣을 칸이 하나도 없다. 입력 형식을 확인할 것")
 
-    show(dbname, props, body, skipped, warn, excluded)
+    # 사람만 아는 값이 비었으면 알린다. 물어보라는 뜻이다.
+    for k in ASK_IF_EMPTY.get(args.db.strip(), []):
+        if k in props and k not in body and k not in excluded:
+            warn.append(f"{k} 이(가) 비었다. 캡처에 없으면 사람에게 묻는다. "
+                        f"원문 URL 이 포럼을 정한다")
+    if not blocks:
+        warn.append("페이지 본문이 없다. 캡처·연락처·참고사항을 안 냈는지 확인한다")
+
+    show(dbname, props, body, skipped, warn, excluded, blocks)
 
     if not args.commit:
         print("\n미리보기다. 실제로 쓰지 않았다.")
@@ -261,7 +330,13 @@ def main() -> None:
     page = _call("/pages", "POST",
                  {"parent": {"type": "data_source_id", "data_source_id": ds_id},
                   "properties": body})
-    print(f"\n행을 만들었다.\n{page.get('url', page['id'])}")
+    if blocks:
+        # 노션은 한 번에 100 블록까지 받는다.
+        for i in range(0, len(blocks), 100):
+            _call(f"/blocks/{page['id']}/children", "PATCH",
+                  {"children": blocks[i:i + 100]})
+    print(f"\n행을 만들었다. 칸 {len(body)}개 · 본문 {len(blocks)}블록")
+    print(page.get("url", page["id"]))
 
 
 if __name__ == "__main__":
