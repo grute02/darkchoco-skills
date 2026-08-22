@@ -97,6 +97,26 @@ def rrn_ok(s: str) -> bool:
     return (11 - sum(int(d[i]) * w[i] for i in range(12)) % 11) % 10 == int(d[12])
 
 
+# 이름에 숨어 글자 순서를 뒤집거나 사라지는 문자.
+# invoice + U+202E + gnp.js 는 화면에 invoicesj.png 로 보인다. 실제는 .js 다.
+HIDDEN = {
+    "\u202a": "LRE", "\u202b": "RLE", "\u202c": "PDF", "\u202d": "LRO",
+    "\u202e": "RLO", "\u2066": "LRI", "\u2067": "RLI", "\u2068": "FSI",
+    "\u2069": "PDI", "\u200b": "ZWSP", "\u200c": "ZWNJ", "\u200d": "ZWJ",
+    "\u200e": "LRM", "\u200f": "RLM", "\u061c": "ALM", "\ufeff": "BOM",
+}
+
+
+def hidden_chars(s: str) -> list[str]:
+    """이름에 숨은 방향 제어 문자. 있으면 확장자가 거짓말일 수 있다."""
+    return sorted({HIDDEN[c] for c in s if c in HIDDEN})
+
+
+def escape_hidden(s: str) -> str:
+    """산출물에 실을 때 눈에 보이게 바꾼다. 원문 그대로 실으면 이 문서도 같이 속는다."""
+    return "".join("<U+%04X>" % ord(c) if c in HIDDEN else c for c in s)
+
+
 def mask_path(p: str, pattern: re.Pattern) -> str:
     """개인정보가 걸린 부분만 가린다. 경로 구조는 남긴다."""
     return pattern.sub(lambda m: m.group(0)[0] + "○" * (len(m.group(0)) - 1), p)
@@ -150,6 +170,13 @@ def scan(paths: list[str], rules: dict) -> dict:
         ext[name.rsplit(".", 1)[-1].lower() if "." in name else "(확장자없음)"] += 1
     depth = Counter(p.count("/") for p in paths)
 
+    # 이름에 숨은 문자. 확장자가 화면과 다르게 보일 수 있다.
+    hidden: list[tuple[str, str]] = []
+    for p in paths:
+        h = hidden_chars(p)
+        if h:
+            hidden.append((escape_hidden(p), ", ".join(h)))
+
     return {
         "등급별": hits,
         "진위신호": signals,
@@ -158,6 +185,7 @@ def scan(paths: list[str], rules: dict) -> dict:
         "깊이": depth,
         "총건수": len(paths),
         "미분류": [p for p in paths if p not in seen],
+        "이름숨은문자": hidden,
     }
 
 
@@ -168,6 +196,28 @@ def report(res: dict, rules: dict, dropped: list[str], src: str) -> str:
     a(f"# 파일 트리 분석  {src}")
     a("")
     a(f"경로 {res['총건수']}건. 파일 내용은 열지 않았다.")
+    a("")
+
+    hid = res.get("이름숨은문자") or []
+    if hid:
+        a(f"## 이름에 숨은 문자 {len(hid)}건")
+        a("")
+        a("**확장자가 화면과 다르게 보일 수 있다. 사람이 먼저 본다.**")
+        a("")
+        a("| 경로 | 문자 |")
+        a("|---|---|")
+        for p, names in hid[:40]:
+            a(f"| {p} | {names} |")
+        if len(hid) > 40:
+            a(f"| 외 {len(hid) - 40}건 | |")
+        a("")
+        a("RLO 같은 문자는 뒤의 글자를 거꾸로 그린다.")
+        a("목록에서 사진으로 보여도 실행 파일일 수 있다.")
+        a("위 경로는 그 문자를 <U+xxxx> 로 바꿔 실었다. 원문 그대로 실으면 이 문서도 같이 속는다.")
+    else:
+        a("## 이름에 숨은 문자 없음")
+        a("")
+        a("방향 제어 문자와 폭 없는 문자를 경로 전체에서 찾았다. 걸린 것이 없다.")
     a("")
 
     a("## 자산 민감도")
@@ -190,7 +240,7 @@ def report(res: dict, rules: dict, dropped: list[str], src: str) -> str:
         a("| 경로 | 규칙 | 왜 |")
         a("|---|---|---|")
         for p, name, why in rows[:40]:
-            a(f"| {p} | {name} | {why} |")
+            a(f"| {escape_hidden(p)} | {name} | {why} |")
         if len(rows) > 40:
             a(f"| 외 {len(rows) - 40}건 | | |")
         a("")
@@ -201,7 +251,7 @@ def report(res: dict, rules: dict, dropped: list[str], src: str) -> str:
         a("| 신호 | 예 |")
         a("|---|---|")
         for k, v in res["진위신호"].items():
-            a(f"| {k} | {', '.join(v[:4])} |")
+            a(f"| {k} | {', '.join(escape_hidden(x) for x in v[:4])} |")
     else:
         a("못 봄 — 경로에서 진위 신호를 찾지 못했다. 내용 대상 규칙은 이 도구가 적용하지 않는다.")
     a("")
@@ -217,7 +267,7 @@ def report(res: dict, rules: dict, dropped: list[str], src: str) -> str:
         a("| 경로 | 규칙 |")
         a("|---|---|")
         for p, name in res["파일명개인정보"][:20]:
-            a(f"| {p} | {name} |")
+            a(f"| {escape_hidden(p)} | {name} |")
     else:
         a("없음 — 규칙에 걸린 것이 없다. 규칙이 아는 형식만 본다.")
     a("")

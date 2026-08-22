@@ -11,6 +11,8 @@
 실행 파일과 압축과 문서는 건드리지 않고 경고만 적는다.
 
 확장자를 믿지 않는다. 유출물은 이름을 속인다.
+이름에 숨은 방향 제어 문자도 본다. 화면에 보이는 확장자와 실제가 다를 수 있다.
+글자로만 된 파일은 시그니처가 없으므로 첫머리로 가른다.
 이 스크립트는 파일을 읽기만 한다. 실행하지 않고 셸을 부르지 않는다.
 """
 from __future__ import annotations
@@ -59,6 +61,39 @@ EXT_OK = {
     "sqlite 파일": {".db", ".sqlite", ".sqlite3"},
 }
 
+# 이름에 숨어 글자 순서를 뒤집거나 사라지는 문자.
+# invoice + U+202E + gnp.js 는 화면에 invoicesj.png 로 보인다. 실제는 .js 다.
+HIDDEN = {
+    "\u202a": "LRE", "\u202b": "RLE", "\u202c": "PDF", "\u202d": "LRO",
+    "\u202e": "RLO", "\u2066": "LRI", "\u2067": "RLI", "\u2068": "FSI",
+    "\u2069": "PDI", "\u200b": "ZWSP", "\u200c": "ZWNJ", "\u200d": "ZWJ",
+    "\u200e": "LRM", "\u200f": "RLM", "\u061c": "ALM", "\ufeff": "BOM",
+}
+
+
+def hidden_chars(s: str) -> list[str]:
+    """이름에 숨은 방향 제어 문자. 있으면 확장자가 거짓말일 수 있다."""
+    return sorted({HIDDEN[c] for c in s if c in HIDDEN})
+
+
+def escape_hidden(s: str) -> str:
+    """산출물에 실을 때 눈에 보이게 바꾼다. 원문 그대로 실으면 이 문서도 같이 속는다."""
+    return "".join("<U+%04X>" % ord(c) if c in HIDDEN else c for c in s)
+
+
+# 글자로만 된 파일은 앞바이트 시그니처가 없다. 첫머리로 종류를 가린다.
+# 여기 걸렸는데 확장자가 다르면 표 파일로 위장한 스크립트다.
+TEXT_SIGN = [
+    ("#!",             "셔뱅 스크립트", {".sh", ".bash", ".py", ".pl", ".rb", ""}),
+    ("<?php",          "php",         {".php", ".phtml", ".php5"}),
+    ("<!doctype html", "html",        {".html", ".htm"}),
+    ("<html",          "html",        {".html", ".htm"}),
+    ("<script",        "스크립트",      {".html", ".htm", ".js", ".hta"}),
+    ("@echo",          "배치",         {".bat", ".cmd"}),
+    ("<?xml",          "xml",         {".xml", ".xhtml", ".svg", ".rels",
+                                       ".config", ".plist", ".resx"}),
+]
+
 # 텍스트일 때 확장자로 도구를 고른다
 TOOL = {
     ".sql": "db_tree",
@@ -67,41 +102,56 @@ TOOL = {
 }
 
 
-def sniff(path: Path) -> tuple[str, str]:
-    """(종류, 이유). 종류가 '텍스트' 일 때만 도구에 태운다."""
+def sniff(path: Path) -> tuple[str, str, bytes]:
+    """(종류, 이유, 앞부분). 종류가 '텍스트' 일 때만 도구에 태운다."""
     try:
-        head = path.open("rb").read(HEAD)
+        with path.open("rb") as f:
+            head = f.read(HEAD)
     except OSError as e:
-        return "못 읽음", str(e)
+        return "못 읽음", str(e), b""
 
     if not head:
-        return "빈 파일", "0 바이트"
+        return "빈 파일", "0 바이트", head
 
     for sig, name in MAGIC:
         if head.startswith(sig):
-            return name, "앞바이트 " + repr(sig)[1:]
+            return name, "앞바이트 " + repr(sig)[1:], head
 
     if b"\x00" in head:
-        return "이진", "앞 %d바이트에 널바이트가 있다" % len(head)
+        return "이진", "앞 %d바이트에 널바이트가 있다" % len(head), head
 
     # 앞부분을 자르면 여러 바이트 글자가 반으로 잘린다. 그것을 오류로 세지 않는다.
     for enc in ("utf-8", "cp949"):
         try:
             codecs.getincrementaldecoder(enc)().decode(head, False)
-            return SAFE, enc + " 로 읽힌다"
+            return SAFE, enc + " 로 읽힌다", head
         except UnicodeDecodeError:
             continue
-    return "이진", "utf-8 도 cp949 도 아니다"
+    return "이진", "utf-8 도 cp949 도 아니다", head
 
 
-def lied(path: Path, kind: str) -> bool:
+def text_kind(head: bytes):
+    """글자로만 된 파일의 첫머리로 종류를 가린다. (종류, 허용확장자) 또는 None."""
+    s = head.decode("utf-8", "ignore").lstrip("\ufeff \t\r\n").lower()
+    for mark, name, ok in TEXT_SIGN:
+        if s.startswith(mark):
+            return name, ok
+    return None
+
+
+def lied(path: Path, kind: str, tk) -> bool:
     """확장자가 실제 종류와 어긋나나. 이름을 속인 파일이 제일 위험하다."""
-    if kind in (SAFE, "빈 파일", "못 읽음"):
+    if kind in ("빈 파일", "못 읽음"):
         return False
-    ok = EXT_OK.get(kind)
+    ok = tk[1] if tk else EXT_OK.get(kind)
     if ok is None:
         return False
     return path.suffix.lower() not in ok
+
+
+def shown(r: dict) -> str:
+    """표에 적을 종류. 텍스트로 위장한 것은 진짜 종류를 괄호로 붙인다."""
+    return "%s(%s)" % (r["kind"], r["astext"]) if r["astext"] else r["kind"]
 
 
 def human(n: int) -> str:
@@ -152,14 +202,22 @@ def main() -> None:
     # ── 1. 종류 판정 ────────────────────────────────
     rows = []
     for p in files:
-        kind, why = sniff(p)
-        rows.append({"path": p, "rel": p.relative_to(case).as_posix(),
-                     "kind": kind, "why": why, "size": p.stat().st_size,
-                     "tool": TOOL.get(p.suffix.lower(), "") if kind == SAFE else "",
-                     "fake": lied(p, kind), "done": "", "note": ""})
+        kind, why, head = sniff(p)
+        tk = text_kind(head) if kind == SAFE else None
+        fake = lied(p, kind, tk)
+        rel = p.relative_to(case).as_posix()
+        hid = hidden_chars(rel)
+        rows.append({"path": p, "rel": rel, "kind": kind,
+                     "astext": tk[0] if tk else "", "why": why,
+                     "size": p.stat().st_size, "fake": fake, "hidden": hid,
+                     "tool": TOOL.get(p.suffix.lower(), "")
+                             if kind == SAFE and not fake and not hid else "",
+                     "done": "", "note": ""})
 
     faked = [r for r in rows if r["fake"]]
-    skipped_kind = [r for r in rows if r["kind"] not in (SAFE, "빈 파일") and not r["fake"]]
+    hidden = [r for r in rows if r["hidden"]]
+    skipped_kind = [r for r in rows if r["kind"] not in (SAFE, "빈 파일")
+                    and not r["fake"] and not r["hidden"]]
 
     # ── 2. 파일 목록을 tree_scan 에 태운다 ───────────
     listing = out / "_경로목록.txt"
@@ -171,7 +229,11 @@ def main() -> None:
     # ── 3. 텍스트만 도구에 태운다 ────────────────────
     for r in rows:
         if not r["tool"]:
-            if r["kind"] == SAFE:
+            if r["hidden"]:
+                r["note"] = "이름에 숨은 문자가 있다"
+            elif r["fake"]:
+                r["note"] = "이름을 속였다"
+            elif r["kind"] == SAFE:
                 r["note"] = "다루는 확장자가 아니다"
             elif r["kind"] == "빈 파일":
                 r["note"] = "0 바이트"
@@ -202,6 +264,26 @@ def main() -> None:
     L.append("파일 %d개 · %s" % (len(rows), human(total)))
     L.append("")
 
+    if hidden:
+        L.append("## 이름에 숨은 문자 %d건" % len(hidden))
+        L.append("")
+        L.append("| 파일 | 문자 | 실제 종류 | 크기 |")
+        L.append("|---|---|---|---|")
+        for r in hidden:
+            L.append("| %s | **%s** | %s | %s |"
+                     % (escape_hidden(r["rel"]), ", ".join(r["hidden"]),
+                        shown(r), human(r["size"])))
+        L.append("")
+        L.append("**화면에 보이는 확장자가 실제와 다를 수 있다. 도구에 안 태웠다.**")
+        L.append("")
+        L.append("RLO 같은 문자는 뒤의 글자를 거꾸로 그린다.")
+        L.append("위 이름은 그 문자를 <U+xxxx> 로 바꿔 실었다.")
+        L.append("원문 그대로 실으면 이 문서도 같이 속는다.")
+        L.append("")
+    else:
+        L.append("## 이름에 숨은 문자 없음")
+        L.append("")
+
     if faked:
         L.append("## 이름을 속인 파일 %d건" % len(faked))
         L.append("")
@@ -209,7 +291,8 @@ def main() -> None:
         L.append("|---|---|---|---|")
         for r in faked:
             L.append("| %s | %s | **%s** | %s |"
-                     % (r["rel"], r["path"].suffix or "없음", r["kind"], human(r["size"])))
+                     % (escape_hidden(r["rel"]), r["path"].suffix or "없음",
+                        shown(r), human(r["size"])))
         L.append("")
         L.append("**확장자와 실제 종류가 어긋난다. 사람이 먼저 본다.**")
         L.append("")
@@ -223,7 +306,8 @@ def main() -> None:
         L.append("| 파일 | 실제 종류 | 크기 |")
         L.append("|---|---|---|")
         for r in skipped_kind:
-            L.append("| %s | %s | %s |" % (r["rel"], r["kind"], human(r["size"])))
+            L.append("| %s | %s | %s |"
+                     % (escape_hidden(r["rel"]), shown(r), human(r["size"])))
         L.append("")
         L.append("이름과 종류는 맞다. 이 흐름에서 다루지 않을 뿐이다.")
         L.append("")
@@ -234,7 +318,7 @@ def main() -> None:
     L.append("|---|---|---|---|---|")
     for r in rows:
         L.append("| %s | %s | %s | %s | %s |"
-                 % (r["rel"], r["kind"], human(r["size"]),
+                 % (escape_hidden(r["rel"]), shown(r), human(r["size"]),
                     r["tool"] or "-", r["done"] or r["note"] or "-"))
     L.append("")
 
@@ -253,6 +337,8 @@ def main() -> None:
     L.append("- 그 표를 `sample_stats <덤프> --table <표>` 로 따로 돌린다")
     if faked:
         L.append("- **이름을 속인 파일은 이 흐름에 넣지 않는다.** 별도로 다룬다")
+    if hidden:
+        L.append("- **이름에 숨은 문자가 있는 파일은 열지 않는다.** 실제 확장자를 먼저 확인한다")
     L.append("")
 
     (out / "00_요약.md").write_text("\n".join(L) + "\n", encoding="utf-8")
@@ -260,6 +346,7 @@ def main() -> None:
     print("케이스   %s" % case.name)
     print("파일     %d개 · %s" % (len(rows), human(total)))
     print("속인 것  %d건" % len(faked))
+    print("숨은 문자 %d건" % len(hidden))
     print("안 다룸  %d건" % len(skipped_kind))
     print("만든 것  %d개" % (len(made) + (1 if tree_ok else 0)))
     print("요약     %s" % (out / "00_요약.md"))
