@@ -77,6 +77,42 @@ def sens_of(col: str) -> str | None:
     return None
 
 
+# 표 단위 등급. tree_scan 의 파일 단위 등급과 축이 다르다. 합치지 않는다.
+# tree_scan 은 파일명만 봐서 덤프 하나에 든 표 수십 개를 못 가른다.
+ADMIN = re.compile(r"master|admin|manager|^root|super_?user|operator|관리자", re.I)
+# 자격증명 값이 드는 칸. 아이디만 있는 칸과 가른다.
+# order_admin_memo 같은 칸이 관리자 자격증명으로 잡히던 오탐을 막는다.
+PWD = re.compile(r"passw|pwd|^pws$|secret|token|api_?key|해시|비밀번호", re.I)
+PUBLIC = re.compile(r"^zip|우편|postal|^code$|region|sido|gugun|법정동|행정동", re.I)
+IDENT = {"이름", "이메일", "전화", "주소"}
+GRADES = ["치명", "높음", "중간", "낮음", "미분류"]
+
+
+def grade_of(table: str, cols: list[str]) -> tuple[str, str]:
+    """(등급, 왜). 칸 이름만 보고 매긴다. 값이 실제로 있는지는 못 본다."""
+    kinds = {k for k in (sens_of(c) for c in cols) if k}
+    pwd = [c for c in cols if PWD.search(c)]
+    # 한 칸이 관리자와 비밀번호를 둘 다 만족하거나, 표 이름이 관리자 계열이면서 비밀번호 칸이 있을 때
+    if [c for c in pwd if ADMIN.search(c)] or (ADMIN.search(table) and pwd):
+        return "치명", "관리자 자격증명 칸이 있다"
+    if "주민번호" in kinds:
+        return "높음", "주민번호 칸이 있다. 값이 들었는지는 못 봤다"
+    if "카드·금융" in kinds:
+        return "높음", "카드·금융 칸이 있다"
+    if pwd:
+        return "높음", "비밀번호 칸이 있다 (%s)" % ", ".join(pwd[:3])
+    if PUBLIC.search(table) and not (kinds - {"주소"}):
+        return "낮음", "공개 데이터로 보이는 표다"
+    ident = kinds & IDENT
+    if len(ident) >= 2:
+        return "높음", "신원 칸이 %d종이다 (%s)" % (len(ident), ", ".join(sorted(ident)))
+    if ident:
+        return "중간", "신원 칸이 하나다 (%s)" % ", ".join(sorted(ident))
+    if kinds & {"계정", "결제·주문", "생년월일"}:
+        return "중간", "계정 아이디나 이력 칸이 있다 (%s)" % ", ".join(sorted(kinds))
+    return "미분류", "개인정보로 보이는 칸이 없다"
+
+
 def scan(path: Path) -> tuple[OrderedDict, Counter, int]:
     """표별 칸 목록과 INSERT 튜플 수를 센다. 값은 읽지 않는다."""
     tables: OrderedDict[str, list[str]] = OrderedDict()
@@ -164,13 +200,40 @@ def main() -> None:
     L.append("표시된 칸만 개인정보로 보이는 것이다. 나머지는 접었다.")
     L.append("")
 
+    graded = {t: grade_of(t, cols) for t, cols in tables.items()}
+    bygrade: Counter = Counter(g for g, _ in graded.values())
+
+    L.append("## 표 단위 자산 민감도")
+    L.append("")
+    L.append("**`tree_scan` 의 파일 단위 등급과 축이 다르다. 합치지 마라.**")
+    L.append("파일명만 보는 도구는 덤프 하나에 든 표 수십 개를 못 가른다.")
+    L.append("여기서 치명이 나와도 파일 단위로는 미분류일 수 있다. 둘 다 적는다.")
+    L.append("")
+    L.append("| 등급 | 표 |")
+    L.append("|---|---|")
+    for g in GRADES:
+        L.append(f"| {g} | {bygrade.get(g, 0)} |")
+    L.append("")
+    L.append("등급을 하나로 합치지 않는다. 치명 1행과 중간 50만행은 성격이 다르다.")
+    L.append("")
+    jumin = [t for t, (_, why) in graded.items() if "주민번호" in why]
+    if jumin:
+        L.append(f"**주민번호 칸이 {len(jumin)}개 표에 있다.** "
+                 + ", ".join(jumin[:8]) + (" ..." if len(jumin) > 8 else ""))
+        L.append("칸이 있다는 것과 값이 들었다는 것은 다르다.")
+        L.append("`sample_stats <덤프> --table <표>` 로 채움률을 보고 등급을 확정한다.")
+        L.append("")
+
     L.append("## 표별 규모")
     L.append("")
-    L.append("| 표 | 칸 | 행(어림) | 개인정보 칸 |")
-    L.append("|---|---|---|---|")
-    for t, cols in sorted(tables.items(), key=lambda kv: -rows.get(kv[0], 0)):
+    L.append("| 표 | 등급 | 칸 | 행(어림) | 개인정보 칸 | 왜 |")
+    L.append("|---|---|---|---|---|---|")
+    order = {g: i for i, g in enumerate(GRADES)}
+    for t, cols in sorted(tables.items(),
+                          key=lambda kv: (order[graded[kv[0]][0]], -rows.get(kv[0], 0))):
         s = [c for c in cols if sens_of(c)]
-        L.append(f"| {t} | {len(cols)} | {rows.get(t, 0):,} | {len(s)} |")
+        g, why = graded[t]
+        L.append(f"| {t} | **{g}** | {len(cols)} | {rows.get(t, 0):,} | {len(s)} | {why} |")
     L.append("")
 
     L.append("## 개인정보 종류별로 어느 표에 있나")
@@ -196,7 +259,7 @@ def main() -> None:
     L.append("|---|---|")
     L.append("| 규모 검증 | 표별 행 수를 주장 규모와 대조한다 |")
     L.append("| 내용 일치 | 게시글이 주장한 항목이 실제 칸에 있는지 본다 |")
-    L.append("| 자산 민감도 | 개인정보 종류와 표 개수 |")
+    L.append("| 자산 민감도 | **표 단위 자산 민감도 절.** 파일 단위와 나란히 적는다 |")
     L.append("| 피해 범위 | 회원만인지 주문·상담까지인지 |")
     L.append("")
     L.append("## 못 봄으로 적을 것")
@@ -204,6 +267,7 @@ def main() -> None:
     L.append("    값의 실재 여부   칸 이름만 읽었다. 값을 안 봤다")
     L.append("    정확한 행 수     구분자로 센 어림값이다. COUNT 를 돌린 것이 아니다")
     L.append("    칸 이름이 축약   무슨 값인지 이름만으로는 모른다")
+    L.append("    표 단위 등급     칸 이름 기준이다. 값이 비어 있어도 등급이 내려가지 않는다")
 
     out = "\n".join(L)
     if args.md:
