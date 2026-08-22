@@ -120,13 +120,74 @@ def in_url(org: str, url: str) -> bool:
     return key in re.sub(r"[^0-9a-z]+", "", (url or "").lower())
 
 
-def same_handle(a: str, b: str) -> bool | None:
-    """행위자가 같은가. 한쪽이라도 비면 None."""
-    x = re.sub(r"[^0-9a-z가-힣]+", "", (a or "").lower())
-    y = re.sub(r"[^0-9a-z가-힣]+", "", (b or "").lower())
+def norm_handle(s: str) -> str:
+    return re.sub(r"[^0-9a-z가-힣]+", "", (s or "").lower())
+
+
+def split_aliases(s: str) -> list[str]:
+    """행위자 DB 의 `다른 이름` 은 자유 서술이다. 조각으로 자른다.
+
+    max987 줄이 이렇게 적혀 있다.
+        Max98 (breached.st 둘째 계정) · Max (Signal)
+    구분자로 자르고 괄호 설명을 뗀다.
+    """
+    out = []
+    for p in re.split(r"[,·/|;\n]|\s+또는\s+", s or ""):
+        p = re.sub(r"\(.*?\)", " ", p).strip(" .'\"")
+        if 2 <= len(p) <= 40:
+            out.append(p)
+    return out
+
+
+_ALIAS: dict[str, tuple[set, str, str]] = {}
+
+
+def alias_set(handle: str) -> tuple[set, str, str]:
+    """행위자 DB 에서 같은 사람의 다른 닉을 모은다.
+
+    (별칭 집합, 대표 핸들, 메모) 를 낸다.
+    **행위자 DB 가 없어도 멈추지 않는다.** 빈 값으로 물러나고 문자열 비교로 돌아간다.
+    """
+    key = norm_handle(handle)
+    if not key:
+        return set(), "", ""
+    if key in _ALIAS:
+        return _ALIAS[key]
+
+    try:
+        ds, _ = find_db("행위자")
+        rs = rows(ds)
+    except SystemExit:
+        _ALIAS[key] = (set(), "", "행위자 DB 없음. 문자열로만 비교했다")
+        return _ALIAS[key]
+
+    for r in rs:
+        props = r.get("properties", {})
+        canon = as_text(props.get("핸들", {}))
+        names = [canon] + split_aliases(as_text(props.get("다른 이름", {})))
+        keys = {norm_handle(n) for n in names if norm_handle(n)}
+        if key in keys:
+            shown = " · ".join(n for n in names if n)
+            _ALIAS[key] = (keys, canon, f"행위자 DB 에 있다. {shown}")
+            return _ALIAS[key]
+
+    _ALIAS[key] = (set(), "", "행위자 DB 에 없다. 새 행위자면 ⑨ 에서 넣는다")
+    return _ALIAS[key]
+
+
+def same_handle(a: str, b: str, aliases: set | None = None) -> bool | None:
+    """행위자가 같은가. 한쪽이라도 비면 None.
+
+    aliases 를 주면 같은 사람의 다른 닉도 같다고 본다.
+    """
+    x, y = norm_handle(a), norm_handle(b)
     if not x or not y:
         return None
-    return x == y
+    if x == y:
+        return True
+    if aliases and x in aliases and y in aliases:
+        return True
+    return False
 
 
 def forum_keys(s: str) -> set[str]:
@@ -178,7 +239,8 @@ def size_note(a: str, b: str) -> str:
 def classify(row_url: str, row_org: str, row_date: str, row_handle: str,
              row_forum: str, row_size: str,
              new_url: str, new_org: str, new_date: str, new_handle: str,
-             new_forum: str, new_size: str) -> tuple[str, str]:
+             new_forum: str, new_size: str,
+             aliases: set | None = None) -> tuple[str, str]:
     """이 줄이 새 건과 어떤 사이인지. (분류, 다음에 할 일)
 
     축은 셋이다. 케이스가 같은가, 행위자가 같은가, 포럼이 같은가.
@@ -209,8 +271,9 @@ def classify(row_url: str, row_org: str, row_date: str, row_handle: str,
     gap = f"게시 시각 차이 {d}일" if d is not None else "게시 시각을 못 읽음"
     tail = f". {gap}{size_note(row_size, new_size)}"
 
-    h = same_handle(row_handle, new_handle)
+    h = same_handle(row_handle, new_handle, aliases)
     f = same_forum(row_forum, new_forum)
+    by_alias = (h is True and norm_handle(row_handle) != norm_handle(new_handle))
 
     if h is False:
         who = f"{row_handle or '?'} vs {new_handle or '?'}"
@@ -225,12 +288,14 @@ def classify(row_url: str, row_org: str, row_date: str, row_handle: str,
         return "확인 못 함", f"행위자를 못 읽었다. --handle 을 주면 가른다{tail}"
 
     # 행위자가 같다
+    same_by = f" (행위자 DB 별칭으로 확인. {row_handle} = {new_handle})" if by_alias else ""
     if f is False:
         return ("재게시",
-                f"같은 행위자가 다른 포럼에 올렸다 ({row_forum or '?'} 에서 {new_forum or '?'} 로){tail}")
+                f"같은 행위자가 다른 포럼에 올렸다 ({row_forum or '?'} 에서 {new_forum or '?'} 로)"
+                f"{same_by}{tail}")
     if f is True:
         return ("아예 동일 케이스",
-                f"행위자와 포럼이 같다 ({row_handle}, {row_forum}){tail}")
+                f"행위자와 포럼이 같다 ({row_handle}, {row_forum}){same_by}{tail}")
     return "확인 못 함", f"포럼을 못 읽었다. --forum 을 주면 재게시인지 가른다{tail}"
 
 
@@ -250,6 +315,9 @@ def main() -> None:
     ds_id, dbname = find_db(args.db)
     q = args.query.lower()
     all_rows = rows(ds_id)
+
+    # 같은 사람이 포럼마다 다른 닉을 쓴다. 행위자 DB 로 먼저 푼다.
+    aliases, canon, alias_note = alias_set(args.handle) if args.handle else (set(), "", "")
 
     hits = []
     for r in all_rows:
@@ -302,8 +370,15 @@ def main() -> None:
                 as_text(props.get("게시 시각", {})) or as_text(props.get("수집일", {})),
                 as_text(props.get("게시자 핸들", {})),
                 as_text(props.get("게시 플랫폼", {})), as_text(props.get("주장 규모", {})),
-                args.url, args.org, args.date, args.handle, args.forum, args.size)
+                args.url, args.org, args.date, args.handle, args.forum, args.size,
+                aliases)
             print(f"  >> {kind} — {todo}")
+        print()
+
+    if alias_note:
+        print(f"행위자   {args.handle}"
+              + (f"  (대표 {canon})" if canon and canon != args.handle else ""))
+        print(f"         {alias_note}")
         print()
 
     if args.url or args.org or args.date or args.handle or args.forum:

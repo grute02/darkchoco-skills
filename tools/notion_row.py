@@ -45,6 +45,7 @@ BODY_KEYS = [("캡처", "paragraph"), ("연락처", "paragraph"),
              ("참고사항", "bulleted_list_item")]
 
 # 이 칸이 비면 미리보기에서 알린다. 사람만 아는 값이라 물어봐야 채워진다.
+# 여기 있는 DB 만 페이지 본문도 본다. 행위자·포럼 DB 는 칸만 쓴다.
 ASK_IF_EMPTY = {"수집": ["원문 URL", "게시 플랫폼"]}
 
 
@@ -315,7 +316,7 @@ def main() -> None:
         if k in props and k not in body and k not in excluded:
             warn.append(f"{k} 이(가) 비었다. 캡처에 없으면 사람에게 묻는다. "
                         f"원문 URL 이 포럼을 정한다")
-    if not blocks:
+    if not blocks and args.db.strip() in ASK_IF_EMPTY:
         warn.append("페이지 본문이 없다. 캡처·연락처·참고사항을 안 냈는지 확인한다")
 
     show(dbname, props, body, skipped, warn, excluded, blocks)
